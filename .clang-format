@@ -4,4 +4,6 @@ BreakBeforeBraces: Linux
 SpaceInEmptyParentheses: 'false'
 ColumnLimit: 120
 IndentWidth: 3
+AllowShortBlocksOnASingleLine: 'true'
+AllowShortIfStatementsOnASingleLine: 'true'
 ...

@@ -1,186 +1,182 @@
+// Type your code here, or load an example.
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <csignal>
-#include <cstddef>
-#include <cstring>
+#include <cassert>
+#include <cstdint>
 #include <iostream>
-#include <limits>
+#include <optional>
+/*
+  InnerTraversals
+  - one-sided
+  - two-sided stub on the client
+  - local for the two-sided on the server
+  LeafTraversals
+  - one-sided
+  - two-sided stub on the client
+  - local for the two-sided server
+  - hybrid on the server which just sends the last inner node
 
-#define GDB() std::raise(SIGINT);
+  - one-sided/ local and hybrid can share the same btree trait
+*/
 
-constexpr uint64_t pageSize = 4096;
+enum class NodeType : uint8_t { INNER = 1, LEAF = 2 };
 
-union RemotePtr {
-   struct {
-      uint64_t NodeId : 8, Offset : 56;
-   };
-   uint64_t full;
-};
-
-// todo inherits from latch
 struct BTreeNodeHeader {
-   static constexpr uint32_t underFullSize = pageSize / 4;
-   static constexpr RemotePtr noNode{.full = std::numeric_limits<uint64_t>::max()};
-
-   union {
-      RemotePtr upperInnerNode;
-      RemotePtr nextLeafNode = noNode;
-   };
-
-   bool hasRightNeighbour() { return nextLeafNode.full != noNode.full; }
-
-   // todo are all of those needed
-   uint16_t count = 0;
-   uint16_t spaceUsed = 0;
-   uint16_t dataOffset = static_cast<uint16_t>(pageSize);
-   bool isLeaf;
-   BTreeNodeHeader(bool isLeaf) : isLeaf(isLeaf){};
+   NodeType type;
+   uint16_t count{0};
+   BTreeNodeHeader() = default;
+   BTreeNodeHeader(NodeType type) : type(type) {}
 };
 
-template <typename Key, typename Value>
-struct BTreeNode : public BTreeNodeHeader {
-   struct SlotLeaf {
+template <typename Key, typename Value, uint64_t NODE_SIZE, NodeType TYPE>
+struct BTreeNodeTrait : BTreeNodeHeader {
+   static constexpr uint32_t underFullSize = NODE_SIZE / 4;
+   static constexpr size_t availableSize = NODE_SIZE - sizeof(BTreeNodeHeader);
+
+   struct SeparatorInfo {
+      Key seperator;
+      BTreeNodeHeader* rightNode;
+   };
+
+   BTreeNodeTrait() : BTreeNodeHeader(TYPE){};
+   bool is_leaf() { return (TYPE == NodeType::LEAF); }
+   std::optional<size_t> lower_bound();
+   bool upsert(const Key& key, const Value& value);
+   SeparatorInfo split();
+   SeparatorInfo find_separator();
+   inline Key& key_at(size_t idx);
+   inline Value& value_at(size_t idx);
+   size_t begin() const;
+   size_t end() const;
+};
+
+// split into leaf and inner
+template <typename Key, typename Value, size_t NODE_SIZE = 4096ul>
+struct BTreeNodeLeaf : public BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::LEAF> {
+   using super_t = BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::LEAF>;
+
+   struct EntryLeaf {
       Key key;
       Value value;
-   };
-   static constexpr size_t numberLeafes = (pageSize - sizeof(BTreeNodeHeader)) / sizeof(SlotLeaf);
+   } __attribute__((packed));
 
-   struct SlotInner {
+   static constexpr size_t numberLeaves = super_t::availableSize / sizeof(EntryLeaf);
+   uint8_t padding[super_t::availableSize - (numberLeaves * sizeof(EntryLeaf))];
+   std::array<EntryLeaf, numberLeaves> leafEntries;
+
+   BTreeNodeLeaf()
+   {
+      static_assert(sizeof(BTreeNodeLeaf) == NODE_SIZE, "btree node size problem");
+      std::cout << "Leaf size " << sizeof(BTreeNodeLeaf) << "\n";
+      std::cout << "Leaf payload  " << sizeof(EntryLeaf) * numberLeaves << "\n";
+      std::cout << "Number Leaf  " << numberLeaves << "\n";
+   };
+};
+
+// split into leaf and inner
+template <typename Key, typename Value, size_t NODE_SIZE = 4096ul>
+struct BTreeNodeInner : public BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::INNER> {
+   using super_t = BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::INNER>;
+
+   struct EntryInner {
       Key key;
-      RemotePtr ptr;
-   };
-   static constexpr size_t numberInner = (pageSize - sizeof(BTreeNodeHeader)) / sizeof(SlotInner);
+      Value child;
+   } __attribute__((packed));
 
-   union {
-      std::array<SlotLeaf, numberLeafes> leafes;
-      std::array<SlotInner, numberInner> inner;
-   };
+   BTreeNodeHeader* outerChildNode;
+   static constexpr size_t availableSizeInner = super_t::availableSize - sizeof(BTreeNodeHeader*);
+   static constexpr size_t numberInners = availableSizeInner / sizeof(EntryInner);
+   std::array<EntryInner, numberInners> innerEntries;
 
-   // used for copy
-   BTreeNode(){};
-
-   BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf)
+   BTreeNodeInner()
    {
-      static_assert(sizeof(BTreeNode<Key, Value>) == pageSize, "btree node size problem");
-   }
-   bool isInner() { return !isLeaf; }
-
-   auto lowerBoundInner(Key key)
-   {
-      return std::lower_bound(std::begin(inner), std::begin(inner) + count, key,
-                              [](const auto& a, const auto& b) { return a.key < b; });
+      static_assert(sizeof(BTreeNodeInner) == NODE_SIZE, "btree node size problem");
+      std::cout << "Inner size " << sizeof(BTreeNodeInner) << "\n";
+      std::cout << "Inner payload  " << sizeof(EntryInner) * numberInners << "\n";
+      std::cout << "Number inner  " << numberInners << "\n";
    }
 
-   auto lowerBoundLeaf(Key key)
+   size_t lower_bound(Key key)
    {
-      return std::lower_bound(std::begin(leafes), std::begin(leafes) + count, key,
-                              [](const auto& a, const auto& b) { return a.key < b; });
+      auto begin_inner = std::begin(innerEntries);
+      auto idx = std::distance(begin_inner, std::lower_bound(begin_inner, begin_inner + super_t::count, key,
+                                                             [](const auto& a, const auto& b) { return a.key < b; }));
+      return idx;
    }
-
-   void insertInInner(Key key, RemotePtr offset)
+   // does not handle splitting, i.e., there has to be space
+   // inserts or upserts
+   void upsert(const Key& key, const Value& value)
    {
-      if (count < numberInner)
-         inner[count++] = {.key = key, .ptr = offset};
-      else
-         throw std::runtime_error("not enough space");
-   }
-
-   void insertInLeaf(Key key, Value value)
-   {
-      if (count < numberLeafes)
-         leafes[count++] = {.key = key, .value = value};
-      else
-         throw std::runtime_error("not enough space in leaf");
-   }
-
-   void splitNode(BTreeNode* parent, uint64_t sepSlot, Key seperator){
-       // todo
-   };
-
-   Key findSeperator(bool splitOrdered) {}
-
-   RemotePtr lookupInner(Key key)
-   {
-      auto it = lowerBoundInner(key);
-      if (it == inner.last())
-         return upperInnerNode;
-      return it->ptr;
-   }
-};
-
-struct Metadata {
-   RemotePtr root;
-};
-
-// default latched
-uint8_t* buffer = new uint8_t[pageSize * 10]{};
-uint64_t used_buffer_slots = 0;
-
-template <typename T>
-struct GuardX {
-   RemotePtr ptr;
-   T* local{nullptr};
-
-   GuardX(){};
-
-   GuardX(RemotePtr ptr) : ptr(ptr)
-   {
-      // latch remote
-      // todo fix to thread local allocator
-      local = new T;
-      std::memcpy(local, buffer + ptr.Offset, pageSize);
-   }
-
-   ~GuardX()
-   {
-      // write back
-      // todo onesided
-      std::cout << "offset " << ptr.Offset << "\n";
-      std::memcpy(buffer + ptr.Offset, local, pageSize);
-      delete local;
-      // unlatch
-   }
-
-   T* operator->() { return local; }
-};
-
-template <class T>
-struct AllocGuard : public GuardX<T> {
-   template <typename... Params>
-   AllocGuard(Params&&... params)
-   {
-      // alloc remote buffer
-      auto slot = used_buffer_slots++;
-      auto offset = slot * pageSize;
-      GuardX<T>::local = new T(std::forward<Params>(params)...);
-      GuardX<T>::ptr = RemotePtr{.NodeId = 0, .Offset = offset};
-   }
-};
-
-// todo replace with remote information
-static Metadata meta;
-
-template <typename Key, typename Value>
-struct BTree {
-   std::atomic<bool> splitOrdered{false};
-   BTree(bool creation)
-   {
-      if (creation) {
-         AllocGuard<BTreeNode<Key, Value>> root(true);
-         // write to metadata
-
-      } else {
-         // wait until root is created
+      if (super_t::count >= numberInners) throw std::runtime_error("not enough space in inner");
+      auto idx = lower_bound(key);
+      if (innerEntries[idx].key == key) {
+         innerEntries[idx].child = value;
+         return;
       }
+      auto begin_inner = std::begin(innerEntries);
+      std::copy(begin_inner + idx, begin_inner + super_t::count, begin_inner + idx + 1);
+      innerEntries[idx].key = key;
+      innerEntries[idx].child = value;
+      super_t::count++;
    }
+   // inner node are split in the middle 
+   size_t find_separator(){
+      size_t slotId = super_t::count / 2;
+      return slotId;
+   }
+   
+   typename super_t::SeparatorInfo split() {
+      // create new right node
+      auto* rightNode = new BTreeNodeInner();
+      auto sep = find_separator();
+      auto begin_inner = std::begin(innerEntries);
+      std::copy(begin_inner + sep, begin_inner + super_t::count, std::begin(rightNode->innerEntries));
+      super_t::count = super_t::count - sep;
+      rightNode->super_t::count = sep;
+      return {sep, rightNode};
+   }
+   size_t begin() const { return 0; }
+   size_t end() const { return super_t::count; }
 };
 
-int main(int argc, char* argv[])
+#include <random>
+
+int main()
 {
-   BTree<int, int> tree(true);
-   auto* root = (BTreeNode<int, int>*)(&buffer[0]);
-   auto it = root->lowerBoundLeaf(100);
-   std::cout << (*it).key << "\n";
+   BTreeNodeInner<int, BTreeNodeHeader*> inner;
+   std::random_device dev;
+   std::mt19937 rng(dev());
+   std::uniform_int_distribution<std::mt19937::result_type> dist6(1, 1e6);  // distribution in range [1, 6]
+
+   for (int i = 0; i < BTreeNodeInner<int, BTreeNodeHeader*>::numberInners; ++i) {
+      inner.upsert(dist6(rng), &inner);
+      std::cout << "i " << i << std::endl;
+   }
+   std::cout << "insert" << std::endl;
+   std::cout << "max " << BTreeNodeInner<int, BTreeNodeHeader*>::numberInners << "\n";
+
+   auto idx = inner.lower_bound(dist6(rng));
+   if (idx != inner.end()) {
+      std::cout << "idx " << idx << "\n";
+      std::cout << "value " << inner.innerEntries[idx].key << "\n";
+   }
+
+   int prev = 0;
+   for (auto it = inner.begin(); it < inner.end(); it++) {
+      std::cout << inner.innerEntries[it].key << "\n";
+      if (prev > inner.innerEntries[it].key) throw std::logic_error("cannot be bigger");
+   }
+
+   auto sepInfo = inner.split();
+   for (auto it = inner.begin(); it < inner.end(); it++) {
+      std::cout << inner.innerEntries[it].key << "\n";
+   }
+   std::cout << "right " << "\n";
+
+   auto rightNode = (decltype(inner)*)sepInfo.rightNode;
+   for (auto it = rightNode->begin(); it < rightNode->end(); it++) {
+      std::cout << rightNode->innerEntries[it].key << "\n";
+   }
+
    return 0;
 }

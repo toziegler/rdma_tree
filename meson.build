@@ -16,7 +16,6 @@ project('rdma_tree', ['c', 'cpp'],
 # Disable warnings for designated initializers with base class defaults
 add_project_arguments([
     '-Wconversion',
-    # '-Wno-missing-field-initializers',
     '-Wno-pedantic',
 ], language: ['c', 'cpp'])
 
