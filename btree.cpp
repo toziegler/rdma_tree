@@ -1,11 +1,11 @@
-// Type your code here, or load an example.
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <csignal>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <optional>
-#include <csignal>
 #define GDB() std::raise(SIGINT);
 
 /*
@@ -22,390 +22,367 @@
   - one-sided/ local and hybrid can share the same btree trait
 */
 
+constexpr uint64_t SIZE = 4096;
 enum class NodeType : uint8_t { INNER = 1, LEAF = 2 };
 
 struct BTreeNodeHeader {
+   using count_t = uint16_t;
    NodeType type;
-   uint16_t count{0};
+   count_t count{0};
    bool is_leaf() { return (type == NodeType::LEAF); }
    BTreeNodeHeader() = default;
    BTreeNodeHeader(NodeType type) : type(type) {}
 };
 
-template <typename Key, typename Value, uint64_t NODE_SIZE, NodeType TYPE>
-struct BTreeNodeTrait : BTreeNodeHeader {
-   static constexpr uint32_t underFullSize = NODE_SIZE / 4;
-   static constexpr size_t availableSize = NODE_SIZE - sizeof(BTreeNodeHeader);
-
-   struct SeparatorInfo {
-      Key sep;
-      BTreeNodeHeader* rightNode;
-   };
-
-   BTreeNodeTrait() : BTreeNodeHeader(TYPE){};
-   std::optional<size_t> lower_bound();
-   bool upsert(const Key& key, const Value& value);
-   SeparatorInfo split();
-   SeparatorInfo find_separator();
-   bool has_space();
-   inline Key& key_at(size_t idx);
-   inline Value& value_at(size_t idx);
-   size_t begin() const;
-   size_t end() const;
+template <typename Key>
+struct SeparatorInfo {
+   Key sep;
+   BTreeNodeHeader* rightNode;
 };
 
-// split into leaf and inner
-template <typename Key, typename Value, size_t NODE_SIZE = 4096ul>
-struct BTreeNodeLeaf : public BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::LEAF> {
-   using super_t = BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::LEAF>;
+// todo could use CRTP to enforce interface
+
+template <typename Node, typename Key, typename Value, uint64_t NODE_SIZE, NodeType TYPE>
+struct BTreeNodeTrait : BTreeNodeHeader {
+   using self_t = BTreeNodeTrait;
+   using node_t = Node;
    using key_t = Key;
    using value_t = Value;
-   
-   struct EntryLeaf {
-      Key key;
-      Value value;
-   } __attribute__((packed));
+   using Pos = count_t;  // index
 
-   static constexpr size_t numberLeaves = super_t::availableSize / sizeof(EntryLeaf);
-   uint8_t padding[super_t::availableSize - (numberLeaves * sizeof(EntryLeaf))]; 
-   std::array<EntryLeaf, numberLeaves> leafEntries;
+   static constexpr NodeType type = TYPE;
+   static constexpr uint64_t bytes = NODE_SIZE;
+   static constexpr uint64_t available_bytes = NODE_SIZE - sizeof(BTreeNodeHeader);
 
-   BTreeNodeLeaf()
-   {
-      static_assert(sizeof(BTreeNodeLeaf) == NODE_SIZE, "btree node size problem");
-   };
-
-   auto lower_bound(Key key)
-   {
-      auto begin_inner = std::begin(leafEntries);
-      auto it = std::lower_bound(begin_inner, begin_inner + super_t::count, key,
-                                 [](const auto& a, const auto& b) { return a.key < b; });
-      return it;
+   BTreeNodeTrait() : BTreeNodeHeader(TYPE) {
+      static_assert(std::numeric_limits<Pos>::max() > NODE_SIZE);  // pedantic check (just in case we have 1 byte keys)
    }
-
-   bool has_space(){
-      return (super_t::count < numberLeaves);
-   };
-
-   void upsert(const Key& key, const Value& value)
-   {
-      if (super_t::count >= numberLeaves) throw std::runtime_error("not enough space in inner");
-      auto begin_inner = std::begin(leafEntries);
-      auto idx = std::distance(begin_inner, std::lower_bound(begin_inner, begin_inner + super_t::count, key,
-                                                             [](const auto& a, const auto& b) { return a.key < b; }));
-
-      if (leafEntries[idx].key == key)
-      {
-         leafEntries[idx].value = value;
-         return;
-      }
-      std::copy(begin_inner + idx, begin_inner + super_t::count, begin_inner + idx + 1);
-      leafEntries[idx].key = key;
-      leafEntries[idx].value = value;
-      super_t::count++;
-   }
-   // inner node are split in the middle
-   size_t find_separator()
-   {
-      // order split optimization 
-      size_t slotId = super_t::count / 2;
-      return slotId;
-   }
-
-   void move_kv_range(BTreeNodeLeaf* dst, uint16_t dstStartSlot, uint16_t srcStartSlot, uint16_t numberSlots)
-   {
-      auto begin_inner = std::begin(leafEntries);
-      std::copy(begin_inner + srcStartSlot, begin_inner + srcStartSlot + numberSlots,
-                std::begin(dst->leafEntries) + dstStartSlot);
-      dst->super_t::count += numberSlots;
-      super_t::count = super_t::count - (numberSlots);
-   }
-
-   // split inner removes the separator
-   typename super_t::SeparatorInfo split()
-   {
-      // create new right node
-      auto* rightNode = new BTreeNodeLeaf();
-      auto sep = find_separator();
-      // copy left to new right
-      move_kv_range(rightNode, 0, sep, super_t::count - sep);
-      return {sep, rightNode};
-   }
-
-   size_t begin() const { return 0; }
-   size_t end() const { return super_t::count; }
-   
-   
 };
 
-// split into leaf and inner
-template <typename Key, typename Value, size_t NODE_SIZE = 4096ul>
-struct BTreeNodeInner : public BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::INNER> {
-   using super_t = BTreeNodeTrait<Key, Value, NODE_SIZE, NodeType::INNER>;
+template <typename Key, typename Value, uint64_t NODE_SIZE = SIZE>
+struct BTreeLeaf : BTreeNodeTrait<BTreeLeaf<Key, Value>, Key, Value, NODE_SIZE, NodeType::LEAF> {
+   using super_t = BTreeNodeTrait<BTreeLeaf<Key, Value>, Key, Value, NODE_SIZE, NodeType::LEAF>;
+   using super_t::available_bytes;
+   using super_t::count;
+   using typename super_t::key_t;
+   using typename super_t::node_t;
+   using typename super_t::Pos;
+   using typename super_t::value_t;
 
-   struct EntryInner {
-      Key key;
-      Value child;
-   } __attribute__((packed));
+   static constexpr uint64_t max_entries = available_bytes / (sizeof(key_t) + sizeof(value_t));
+   std::array<key_t, max_entries> keys;
+   std::array<value_t, max_entries> values;
+   uint8_t padding[available_bytes - (max_entries * (sizeof(key_t) + sizeof(value_t)))];
 
-   struct {
-      BTreeNodeHeader* outerChildNode;
-   } __attribute__((packed));
-   
-   static constexpr size_t availableSizeInner = super_t::availableSize - sizeof(BTreeNodeHeader*);
-   static constexpr size_t numberInners = availableSizeInner / sizeof(EntryInner);
-   uint8_t padding[availableSizeInner - ( numberInners * sizeof(EntryInner))]; 
-   std::array<EntryInner, numberInners> innerEntries;
+   BTreeLeaf() { static_assert(sizeof(BTreeLeaf) == NODE_SIZE, "btree node size problem"); }
 
-   BTreeNodeInner()
-   {
-      static_assert(sizeof(BTreeNodeInner) == NODE_SIZE, "btree node size problem");
+   Pos lower_bound(const key_t& key) {
+      return static_cast<Pos>(
+          std::distance(std::begin(keys), std::lower_bound(std::begin(keys), std::begin(keys) + count, key)));
    }
 
-   Value lower_bound(Key key)
-   {
-      auto begin_inner = std::begin(innerEntries);
-      auto it = std::lower_bound(begin_inner, begin_inner + super_t::count, key,
-                                 [](const auto& a, const auto& b) { return a.key < b; });
-      if (it == begin_inner + super_t::count) { return outerChildNode; }
-      return it->child;
-   }
-
-   bool has_space(){
-      return (super_t::count < numberInners);
-   };
-   
-   // does not handle splitting, i.e., there has to be space
-   // inserts or upserts
-   void upsert(const Key& key, const Value& value)
-   {
-      if (super_t::count >= numberInners) throw std::runtime_error("not enough space in inner");
-      auto begin_inner = std::begin(innerEntries);
-      auto idx = std::distance(begin_inner, std::lower_bound(begin_inner, begin_inner + super_t::count, key,
-                                                               [](const auto& a, const auto& b) { return a.key < b; }));
-      
-      if (innerEntries[idx].key == key)
-      {
-         innerEntries[idx].child = value;
-         return;
+   void insert(const key_t& key, const value_t& value) {
+      Pos position = lower_bound(key);
+      if (position != end()) {
+         std::move(std::begin(keys) + position, std::begin(keys) + end(), std::begin(keys) + position + 1);
+         std::move(std::begin(values) + position, std::begin(values) + end(), std::begin(values) + position + 1);
       }
-      std::copy(begin_inner + idx, begin_inner + super_t::count, begin_inner + idx + 1);
-      innerEntries[idx].key = key;
-      innerEntries[idx].child = value;
-      super_t::count++;
-   }
-   // inner node are split in the middle
-   size_t find_separator()
-   {
-      size_t slotId = super_t::count / 2;
-      return slotId;
+      keys[position] = key;
+      values[position] = value;
+      count++;
    }
 
-   void move_kv_range(BTreeNodeInner* dst, uint16_t dstStartSlot, uint16_t srcStartSlot, uint16_t numberSlots)
-   {
-      auto begin_inner = std::begin(innerEntries);
-      std::copy(begin_inner + srcStartSlot, begin_inner + srcStartSlot + numberSlots,
-                std::begin(dst->innerEntries) + dstStartSlot);
-      dst->super_t::count += numberSlots;
-      super_t::count = super_t::count - (numberSlots);
+   bool update(const key_t& key, const value_t& value) {
+      Pos position = lower_bound(key);
+      if ((position == end()) || (key_at(position) != key)) return false;
+      values[position] = value;
+      return true;
    }
 
-   size_t count(){
-      return super_t::count;
-   }
-   
-   // split inner removes the separator
-   typename super_t::SeparatorInfo split()
-   {
-      // create new right node
-      auto* rightNode = new BTreeNodeInner();
-      auto sep = find_separator();
-      // copy left to new right
-      move_kv_range(rightNode, 0, sep, super_t::count - sep);
-      // because we move the sep out of this node
-      rightNode->outerChildNode = outerChildNode;
-      // set outer child to the seperator
-      outerChildNode = reinterpret_cast<BTreeNodeHeader*>(innerEntries[super_t::count].child);
-      super_t::count--; // remove separator 
-      return {sep, rightNode};
+   void upsert(const key_t& key, const value_t& value) {
+      if (update(key, value)) return;
+      insert(key, value);
    }
 
-   size_t begin() const { return 0; }
-   size_t end() const { return super_t::count; }
+   SeparatorInfo<key_t> split() {
+      assert(count == max_entries);  // only split if full
+      SeparatorInfo<key_t> sepInfo;
+      auto* rightNode = new BTreeLeaf();
+      auto sepPosition = find_separator();
+      sepInfo.sep = keys[sepPosition];
+      sepInfo.rightNode = rightNode;
+      // move from one node to the other; keep separator key in the left child
+      std::move(std::begin(keys) + sepPosition + 1, std::begin(keys) + end(), std::begin(rightNode->keys));
+      std::move(std::begin(values) + sepPosition + 1, std::begin(values) + end(), std::begin(rightNode->values));
+      // update counts
+      rightNode->count = count - (sepPosition + static_cast<Pos>(1));
+      count = count - rightNode->count;
+      return sepInfo;
+   };
+
+   Pos find_separator() { return count / 2; }
+   bool has_space() { return (count < max_entries); }
+   Pos begin() { return 0; }
+   Pos end() { return count; }  // returns one index behind valid index as usual
+   inline key_t key_at(Pos idx) { return keys[idx]; }
+   inline value_t value_at(Pos idx) { return values[idx]; }
+
+   // for debugging
+   void print_keys() {
+      for (auto idx = begin(); idx < end(); idx++) { std::cout << keys[idx] << "\n"; }
+   }
+   void print_values() {
+      for (auto idx = begin(); idx < end(); idx++) { std::cout << values[idx] << "\n"; }
+   }
 };
 
-template<typename InnerNode, typename LeafNode> 
-struct BTreeTrait{
+template <typename Key, typename Value, uint64_t NODE_SIZE = SIZE>
+struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE, NodeType::INNER> {
+   using super_t = BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE, NodeType::INNER>;
+   using super_t::available_bytes;
+   using super_t::count;
+   using typename super_t::key_t;
+   using typename super_t::node_t;
+   using typename super_t::Pos;
+   using typename super_t::value_t;
+
+   static constexpr uint64_t max_entries = (available_bytes - sizeof(value_t)) / (sizeof(key_t) + sizeof(value_t));
+   std::array<key_t, max_entries> keys;
+   std::array<value_t, max_entries + 1> values;
+
+   BTreeInner() { static_assert(sizeof(BTreeInner) == NODE_SIZE, "btree node size problem"); }
+
+   Pos lower_bound(const key_t& key) {
+      return static_cast<Pos>(
+          std::distance(std::begin(keys), std::lower_bound(std::begin(keys), std::begin(keys) + count, key)));
+   }
+
+   value_t next_child(const key_t& key) {
+      auto pos = lower_bound(key);
+      return values[pos];
+   }
+
+   bool insert(const key_t& newSep, const value_t& left, const value_t& right) {
+      Pos position = lower_bound(newSep);
+      std::move(std::begin(keys) + position, std::begin(keys) + end(), std::begin(keys) + position + 1);
+      // end() + 1 handles the n+1 childs
+      std::move(std::begin(values) + position, std::begin(values) + end() + 1, std::begin(values) + position + 1);
+      keys[position] = newSep;
+      values[position] = left;
+      values[position + 1] = right;  // this updates the old left pointer
+      count++;
+      return true;
+   }
+
+   SeparatorInfo<key_t> split() {
+      assert(count == max_entries);  // only split if full
+      SeparatorInfo<key_t> sepInfo;
+      auto* rightNode = new BTreeInner();
+      auto sepPosition = find_separator();
+      sepInfo.sep = keys[sepPosition];
+      sepInfo.rightNode = rightNode;
+      // move from one node to the other; keep separator key in the left child
+      std::move(std::begin(keys) + sepPosition + 1, std::begin(keys) + end(), std::begin(rightNode->keys));
+      // need to copy one more
+      std::move(std::begin(values) + sepPosition + 1, std::begin(values) + end() + 1, std::begin(rightNode->values));
+      // update counts
+      rightNode->count = count - (sepPosition + 1);
+      count = count - rightNode->count - 1;  // -1 removes the sep key but ptr is kept
+      return sepInfo;
+   }
+
+   Pos find_separator() { return count / 2; }
+   bool has_space() { return (count < max_entries); }
+   Pos begin() { return 0; }
+   Pos end() { return count; }  // returns one index behind valid index as usual
+   inline key_t key_at(Pos idx) { return keys[idx]; }
+   inline value_t value_at(Pos idx) { return values[idx]; }
+
+   // for debugging
+   void print_keys() {
+      for (auto idx = begin(); idx < end(); idx++) { std::cout << keys[idx] << "\n"; }
+   }
+   void print_values() {
+      auto idx = begin();
+      for (; idx < end(); idx++) { std::cout << values[idx] << "\n"; }
+      std::cout << values[idx] << "\n";  // print n+1 child
+   }
+};
+
+template <typename InnerNode, typename LeafNode>
+struct BTreeTrait {
    using leaf_t = LeafNode;
    using key_t = typename leaf_t::key_t;
    using value_t = typename leaf_t::value_t;
-
-   bool lookup(const key_t& key, value_t& value);
-   bool insert(const key_t& key, const value_t& value);
 };
 
-
-template<typename InnerNode, typename LeafNode>
-struct BTree : BTreeTrait<InnerNode, LeafNode>{
+template <typename InnerNode, typename LeafNode>
+struct BTree : public BTreeTrait<InnerNode, LeafNode> {
    using super_t = BTreeTrait<InnerNode, LeafNode>;
    using self_t = BTree<InnerNode, LeafNode>;
+   using header_t = BTreeNodeHeader;
+   using leaf_t = LeafNode;
+   using inner_t = InnerNode;
    using typename super_t::key_t;
    using typename super_t::value_t;
-
    BTreeNodeHeader* root;
-   BTree() : root(new LeafNode()){};
+   BTree() : root(new LeafNode()) {}
 
-   bool lookup(const key_t& key, value_t& value){
-      BTreeNodeHeader* node = root;
-      while(!node->is_leaf()){
-         auto inner = static_cast<InnerNode*>(node);
-         node = inner->lower_bound(key);
-      }
-      auto leaf = static_cast<LeafNode*>(node);
-      auto kv = leaf->lower_bound(key);
-      value = kv->value;
-      if(kv->key == key)
-         return true;
-      return false;
-   }
-
-
-   void ensure_space(){}
-   
-   // calls split on the passed node, and checks that parents have space
-   // otherwise we split the parents
-   void try_split(BTreeNodeHeader* node, BTreeNodeHeader* parent, key_t key){
-      if(node == root){
-         // just creat a new root 
-         parent = new InnerNode();
-         root = parent;
-         std::cout << "created new root " << "\n";
-
-      }
-
-      // must be inner 
-      if(static_cast<InnerNode*>(parent)->has_space()){
-         // we split the node into two
-         auto sep = static_cast<LeafNode*>(node)->split();
-         // use key to find the old sep
-         // cannot use lowerbound search here
-         auto begin_inner = std::begin(static_cast<InnerNode*>(parent)->innerEntries);
-         auto count = static_cast<InnerNode*>(parent)->count();
-         // this implements the shift 
-         auto it = std::lower_bound(begin_inner, begin_inner + count, key,
-                                 [](const auto& a, const auto& b) { return a.key < b; });
-
-         if(it == begin_inner + count){
-            std::cout << "outerchild " << "\n";
-            static_cast<InnerNode*>(parent)->outerChildNode = sep.rightNode;
-            // todo fix
-            throw std::logic_error("implement parent split");
-            // herer we overwrite the outerchild always and do not integarte it 
-         }
-         else{
-            std::cout << "innerchild" << "\n";
-            it->child = sep.rightNode;
-         }
-         // insert new seperator and left tree and move it to the right 
-         static_cast<InnerNode*>(parent)->upsert(sep.sep, sep.rightNode);
-         return;
-      }
-
-      // split parents first and retry
-      // todo when we grow higher then height 1 we need to split parents 
-      throw std::logic_error("implement parent split");
-   }
-   
-   bool upsert(const key_t& key, const value_t& value){
-      BTreeNodeHeader* node = root;
-      BTreeNodeHeader* parent = nullptr;
-      while(!node->is_leaf()){
+   template <typename FN>
+   std::pair<header_t*, header_t*> traverse_inner(const key_t& key, FN stop_condition) {
+      header_t* parent = nullptr;
+      header_t* node = root;
+      while (!node->is_leaf() && !stop_condition(node)) {
          auto inner = static_cast<InnerNode*>(node);
          parent = node;
-         node = inner->lower_bound(key);
+         node = inner->next_child(key);
       }
+      return {parent, node};
+   }
 
+   bool lookup(const key_t& key, value_t& retValue) {
+      auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
       auto leaf = static_cast<LeafNode*>(node);
-      if(!leaf->has_space()){
-         try_split(leaf, parent, key);
-         return upsert(key, value);
-      }
-      leaf->upsert(key, value);
+      auto idx = leaf->lower_bound(key);
+      if (idx == leaf->end() && leaf->key_at(idx) != key) return false;
+      retValue = leaf->value_at(idx);
       return true;
    }
-   
-   
+
+   void ensure_space(header_t* toSplit, key_t key) {
+      auto [parent, node] = traverse_inner(key, [&](header_t* currentNode) { return currentNode == toSplit; });
+      while (!node->is_leaf() && node != toSplit) {
+         auto inner = static_cast<InnerNode*>(node);
+         parent = node;
+         node = inner->next_child(key);
+      }
+      if (node == toSplit) return try_split(node, parent, key);
+      throw std::logic_error("could not find node");
+   }
+
+   void try_split(header_t* node, header_t* parent, const key_t& key) {
+      if (node == root) {
+         parent = new InnerNode();
+         root = parent;
+      }
+      if (static_cast<InnerNode*>(parent)->has_space()) {
+         SeparatorInfo<key_t> sep;
+         if (node->is_leaf())
+            sep = static_cast<LeafNode*>(node)->split();
+         else
+            sep = static_cast<InnerNode*>(node)->split();
+         static_cast<InnerNode*>(parent)->insert(sep.sep, node, sep.rightNode);
+         return;
+      }
+      // split parent
+      ensure_space(parent, key);
+   }
+
+   void insert(const key_t& key, const value_t& value) {
+      for (uint64_t repeatCounter = 0;; repeatCounter++) {
+         auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
+         auto leaf = static_cast<LeafNode*>(node);
+         if (leaf->has_space()) {
+            leaf->insert(key, value);
+            return;
+         }
+         try_split(leaf, parent, key);
+      }
+   }
+
+   bool update(const key_t& key, const value_t& value) {
+      auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
+      auto leaf = static_cast<LeafNode*>(node);
+      return leaf->update(key, value);
+   }
 };
+
+// scan
+template <typename Tree>
+struct RangeScannable {
+   using leaf_t = typename Tree::leaf_t;
+   using inner_t = typename Tree::inner_t;
+   using key_t = typename leaf_t::key_t;
+   using pos_t = typename leaf_t::Pos;
+   using value_t = typename leaf_t::value_t;
+   using header_t = typename Tree::header_t;
+   // --------------------------------------------------------------------------
+   template <typename FN>
+   void range_scan(const key_t& from, const key_t& to, FN scan_function) {
+      auto& tree = this->as_btree();
+      auto start = from;
+      while (true) {
+         auto [parent, node] = tree.traverse_inner(start, []([[maybe_unused]] header_t* currentNode) { return false; });
+         auto* lastInner = static_cast<inner_t*>(parent);
+         pos_t posInner = lastInner->lower_bound(start);
+         while (posInner != lastInner->end()) {
+            auto leaf = static_cast<leaf_t*>(lastInner->value_at(posInner));
+            pos_t it = leaf->lower_bound(start);
+
+            std::cout << "start " << start << "\n";
+            std::cout << "leaf it " << it << " end " << leaf->end() << "\n";
+            while (it != leaf->end()) {
+               if (leaf->key_at(it) > to) return;
+               scan_function(leaf->key_at(it), leaf->value_at(it));
+               start = leaf->key_at(it);
+               it++;
+            };
+            posInner++;
+            std::cout << "pos inner " << posInner << "\n";
+            std::cout << "end inner " << lastInner->end() << "\n";
+         }
+         // inner exhausted need to start new traversal
+         start++;  // requires fence keys and increment here if those keys are not sequential it will fail here
+      }
+   }
+   // --------------------------------------------------------------------------
+  protected:
+   Tree& as_btree() { return *reinterpret_cast<Tree*>(this); }
+};  // LeafIterator
 
 #include <random>
 
-int main()
-{
-   using InnerNode = BTreeNodeInner<int, BTreeNodeHeader*>;
-   using LeafNode = BTreeNodeLeaf<int, int>;
+int main() {
+   using Leaf = BTreeLeaf<int, int>;
+   using Inner = BTreeInner<int, BTreeNodeHeader*>;
+   using Tree = BTree<Inner, Leaf>;
 
-   BTree<InnerNode,LeafNode> tree;
+   {
+      BTree<Inner, Leaf> tree;
 
-   for (int i = 0; i < 100000; ++i) {
-      tree.upsert(i,i);
-      if((i % 1000000) == 0)
-         std::cout << "i " << i << std::endl;
-   }
+      constexpr int KEYS = 1e6;
 
+      for (int k_i = 1; k_i <= KEYS; k_i++) { tree.insert(k_i, k_i); }
 
-   std::cout <<  "lookup" << "\n";
-
-   for (int i = 0; i < 100000; ++i) {
-      int val;
-      if(tree.lookup(i,val)){
-         std::cout << "i " << val << std::endl;
+      for (int k_i = 1; k_i <= KEYS; k_i++) {
+         int v_i;
+         if (!tree.lookup(k_i, v_i)) throw std::logic_error("key not found");
       }
    }
 
+   {  // reverse test
+      BTree<Inner, Leaf> tree;
 
-   
-   // BTreeNodeInner<int, BTreeNodeHeader*> inner;
-   // std::random_device dev;
-   // std::mt19937 rng(dev());
-   // std::uniform_int_distribution<std::mt19937::result_type> dist6(
-   //     0, BTreeNodeInner<int, BTreeNodeHeader*>::numberInners);  // distribution in range [1, 6]
+      constexpr int KEYS = 1e6;
 
-   // for (int i = 0; i < BTreeNodeInner<int, BTreeNodeHeader*>::numberInners; ++i) {
-   //    inner.upsert(i, reinterpret_cast<BTreeNodeHeader*>(&inner));
-   //    std::cout << "i " << i << std::endl;
-   // }
-   // std::cout << "insert" << std::endl;
-   // std::cout << "max " << BTreeNodeInner<int, BTreeNodeHeader*>::numberInners << "\n";
+      for (int k_i = KEYS; k_i > 0; k_i--) { tree.insert(k_i, k_i); }
 
-   // auto idx = inner.lower_bound(static_cast<int>(dist6(rng)));
+      for (int k_i = KEYS; k_i > 0; k_i--) {
+         int v_i;
+         if (!tree.lookup(k_i, v_i)) throw std::logic_error("key not found");
+      }
+   }
 
-   // int prev = 0;
-   // for (auto it = inner.begin(); it < inner.end(); it++) {
-   //    std::cout << inner.innerEntries[it].key << "\n";
-   //    if (prev > inner.innerEntries[it].key) throw std::logic_error("cannot be bigger");
-   // }
-
-   // auto sepInfo = inner.split();
-
-   // std::cout << "sepinfo " << sepInfo.sep << "\n";
-
-   // for (auto it = inner.begin(); it < inner.end(); it++) {
-   //    std::cout << inner.innerEntries[it].key << "\n";
-   //    std::cout << inner.innerEntries[it].child << "\n";
-   // }
-
-   // std::cout << " "
-   //           << "\n";
-   // std::cout << "right "
-   //           << "\n";
-   // std::cout << " "
-   //           << "\n";
-
-   // auto rightNode = (decltype(inner)*)sepInfo.rightNode;
-   // for (auto it = rightNode->begin(); it < rightNode->end(); it++) {
-   //    std::cout << rightNode->innerEntries[it].key << "\n";
-   //    std::cout << rightNode->innerEntries[it].child << "\n";
-   // }
+   {
+      constexpr int KEYS = 1e6;
+      struct RangeTree : public RangeScannable<Tree>, public Tree {};
+      RangeTree tree;
+      for (int k_i = KEYS; k_i > 0; k_i--) { tree.insert(k_i, k_i); }
+      tree.range_scan(200, 1000, [&](int key, int leaf) {
+         std::cout << "key " << key << "\n";
+         std::cout << "leaf " << leaf << "\n";
+      });
+   }
 
    return 0;
 }
