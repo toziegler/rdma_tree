@@ -40,7 +40,23 @@ struct SeparatorInfo {
    BTreeNodeHeader* rightNode;
 };
 
-// todo could use CRTP to enforce interface
+template <class Key>
+struct FenceKeys {
+   struct FenceKey {
+      bool isInfinity = true;
+      Key key;
+   };
+   FenceKey lower;  // exclusive
+   FenceKey upper;  // inclusive
+   bool isLowerInfinity() { return lower.isInfinity; }
+   bool isUpperInfinity() { return upper.isInfinity; }
+   FenceKey getLower() { return lower; }
+   FenceKey getUpper() { return upper; }
+   void setFences(FenceKey lower_, FenceKey upper_) {
+      lower = lower_;
+      upper = upper_;
+   }
+};
 
 template <typename Node, typename Key, typename Value, uint64_t NODE_SIZE, NodeType TYPE>
 struct BTreeNodeTrait : BTreeNodeHeader {
@@ -69,10 +85,12 @@ struct BTreeLeaf : BTreeNodeTrait<BTreeLeaf<Key, Value>, Key, Value, NODE_SIZE, 
    using typename super_t::Pos;
    using typename super_t::value_t;
 
-   static constexpr uint64_t max_entries = available_bytes / (sizeof(key_t) + sizeof(value_t));
+   static constexpr uint64_t max_entries =
+       (available_bytes - sizeof(FenceKeys<Key>)) / (sizeof(key_t) + sizeof(value_t));
+   FenceKeys<Key> fenceKeys;
    std::array<key_t, max_entries> keys;
    std::array<value_t, max_entries> values;
-   uint8_t padding[available_bytes - (max_entries * (sizeof(key_t) + sizeof(value_t)))];
+   uint8_t padding[available_bytes - sizeof(FenceKeys<Key>) - (max_entries * (sizeof(key_t) + sizeof(value_t)))];
 
    BTreeLeaf() { static_assert(sizeof(BTreeLeaf) == NODE_SIZE, "btree node size problem"); }
 
@@ -108,15 +126,18 @@ struct BTreeLeaf : BTreeNodeTrait<BTreeLeaf<Key, Value>, Key, Value, NODE_SIZE, 
       assert(count == max_entries);  // only split if full
       SeparatorInfo<key_t> sepInfo;
       auto* rightNode = new BTreeLeaf();
-      auto sepPosition = find_separator();
+      Pos sepPosition = find_separator();
       sepInfo.sep = keys[sepPosition];
       sepInfo.rightNode = rightNode;
       // move from one node to the other; keep separator key in the left child
       std::move(std::begin(keys) + sepPosition + 1, std::begin(keys) + end(), std::begin(rightNode->keys));
       std::move(std::begin(values) + sepPosition + 1, std::begin(values) + end(), std::begin(rightNode->values));
       // update counts
-      rightNode->count = count - (sepPosition + static_cast<Pos>(1));
+      rightNode->count = count - static_cast<Pos>((sepPosition + static_cast<Pos>(1)));
       count = count - rightNode->count;
+      // fence
+      rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep}, fenceKeys.getUpper()); // order is important
+      fenceKeys.setFences(fenceKeys.getLower(), {.isInfinity = false, .key = sepInfo.sep});
       return sepInfo;
    };
 
@@ -146,7 +167,9 @@ struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE
    using typename super_t::Pos;
    using typename super_t::value_t;
 
-   static constexpr uint64_t max_entries = (available_bytes - sizeof(value_t)) / (sizeof(key_t) + sizeof(value_t));
+   static constexpr uint64_t max_entries =
+       (available_bytes - sizeof(value_t) - sizeof(FenceKeys<Key>)) / (sizeof(key_t) + sizeof(value_t));
+   FenceKeys<Key> fenceKeys;
    std::array<key_t, max_entries> keys;
    std::array<value_t, max_entries + 1> values;
 
@@ -156,7 +179,12 @@ struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE
       return static_cast<Pos>(
           std::distance(std::begin(keys), std::lower_bound(std::begin(keys), std::begin(keys) + count, key)));
    }
-
+   
+   Pos upper_bound(const key_t& key) {
+      return static_cast<Pos>(
+          std::distance(std::begin(keys), std::upper_bound(std::begin(keys), std::begin(keys) + count, key)));
+   }
+   
    value_t next_child(const key_t& key) {
       auto pos = lower_bound(key);
       return values[pos];
@@ -186,8 +214,11 @@ struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE
       // need to copy one more
       std::move(std::begin(values) + sepPosition + 1, std::begin(values) + end() + 1, std::begin(rightNode->values));
       // update counts
-      rightNode->count = count - (sepPosition + 1);
-      count = count - rightNode->count - 1;  // -1 removes the sep key but ptr is kept
+      rightNode->count = count - static_cast<Pos>((sepPosition + 1));
+      count = count - static_cast<Pos>(rightNode->count - 1);  // -1 removes the sep key but ptr is kept
+      // set fences
+      rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep}, fenceKeys.getUpper()); // order is important
+      fenceKeys.setFences(fenceKeys.getLower(), {.isInfinity = false, .key = sepInfo.sep});
       return sepInfo;
    }
 
@@ -240,6 +271,19 @@ struct BTree : public BTreeTrait<InnerNode, LeafNode> {
       return {parent, node};
    }
 
+   template <typename FN>
+   std::pair<header_t*, header_t*> traverse_inner_upper_bound(const key_t& key, FN stop_condition) {
+      header_t* parent = nullptr;
+      header_t* node = root;
+      while (!node->is_leaf() && !stop_condition(node)) {
+         auto inner = static_cast<InnerNode*>(node);
+         parent = node;
+         auto pos = inner->upper_bound(key);   
+         node = inner->values[pos];
+      }
+      return {parent, node};
+   }
+   
    bool lookup(const key_t& key, value_t& retValue) {
       auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
       auto leaf = static_cast<LeafNode*>(node);
@@ -311,14 +355,14 @@ struct RangeScannable {
    void range_scan(const key_t& from, const key_t& to, FN scan_function) {
       auto& tree = this->as_btree();
       auto start = from;
+      // setup find first inner node with lowerbound search 
+      auto [parent, node] = tree.traverse_inner(start, []([[maybe_unused]] header_t* currentNode) { return false; });
+      auto* lastInner = static_cast<inner_t*>(parent);
+      pos_t posInner = lastInner->lower_bound(start);
       while (true) {
-         auto [parent, node] = tree.traverse_inner(start, []([[maybe_unused]] header_t* currentNode) { return false; });
-         auto* lastInner = static_cast<inner_t*>(parent);
-         pos_t posInner = lastInner->lower_bound(start);
          while (posInner != lastInner->end()) {
             auto leaf = static_cast<leaf_t*>(lastInner->value_at(posInner));
             pos_t it = leaf->lower_bound(start);
-
             std::cout << "start " << start << "\n";
             std::cout << "leaf it " << it << " end " << leaf->end() << "\n";
             while (it != leaf->end()) {
@@ -331,8 +375,13 @@ struct RangeScannable {
             std::cout << "pos inner " << posInner << "\n";
             std::cout << "end inner " << lastInner->end() << "\n";
          }
-         // inner exhausted need to start new traversal
-         start++;  // requires fence keys and increment here if those keys are not sequential it will fail here
+         // inner exhausted need to start new traversal with upper bound for fence keys
+         auto p  = tree.traverse_inner_upper_bound(lastInner->fenceKeys.getUpper().key, []([[maybe_unused]] header_t* currentNode) { return false; });
+         parent = p.first;
+         node = p.second;
+         lastInner = static_cast<inner_t*>(parent);
+         posInner = lastInner->lower_bound(lastInner->fenceKeys.getLower().key);
+         start = lastInner->fenceKeys.getLower().key;
       }
    }
    // --------------------------------------------------------------------------
