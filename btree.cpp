@@ -136,7 +136,8 @@ struct BTreeLeaf : BTreeNodeTrait<BTreeLeaf<Key, Value>, Key, Value, NODE_SIZE, 
       rightNode->count = count - static_cast<Pos>((sepPosition + static_cast<Pos>(1)));
       count = count - rightNode->count;
       // fence
-      rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep}, fenceKeys.getUpper()); // order is important
+      rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep},
+                                     fenceKeys.getUpper());  // order is important
       fenceKeys.setFences(fenceKeys.getLower(), {.isInfinity = false, .key = sepInfo.sep});
       return sepInfo;
    };
@@ -179,12 +180,12 @@ struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE
       return static_cast<Pos>(
           std::distance(std::begin(keys), std::lower_bound(std::begin(keys), std::begin(keys) + count, key)));
    }
-   
+
    Pos upper_bound(const key_t& key) {
       return static_cast<Pos>(
           std::distance(std::begin(keys), std::upper_bound(std::begin(keys), std::begin(keys) + count, key)));
    }
-   
+
    value_t next_child(const key_t& key) {
       auto pos = lower_bound(key);
       return values[pos];
@@ -217,7 +218,8 @@ struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE
       rightNode->count = count - static_cast<Pos>((sepPosition + 1));
       count = count - static_cast<Pos>(rightNode->count - 1);  // -1 removes the sep key but ptr is kept
       // set fences
-      rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep}, fenceKeys.getUpper()); // order is important
+      rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep},
+                                     fenceKeys.getUpper());  // order is important
       fenceKeys.setFences(fenceKeys.getLower(), {.isInfinity = false, .key = sepInfo.sep});
       return sepInfo;
    }
@@ -278,12 +280,12 @@ struct BTree : public BTreeTrait<InnerNode, LeafNode> {
       while (!node->is_leaf() && !stop_condition(node)) {
          auto inner = static_cast<InnerNode*>(node);
          parent = node;
-         auto pos = inner->upper_bound(key);   
+         auto pos = inner->upper_bound(key);
          node = inner->values[pos];
       }
       return {parent, node};
    }
-   
+
    bool lookup(const key_t& key, value_t& retValue) {
       auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
       auto leaf = static_cast<LeafNode*>(node);
@@ -355,7 +357,7 @@ struct RangeScannable {
    void range_scan(const key_t& from, const key_t& to, FN scan_function) {
       auto& tree = this->as_btree();
       auto start = from;
-      // setup find first inner node with lowerbound search 
+      // setup find first inner node with lowerbound search
       auto [parent, node] = tree.traverse_inner(start, []([[maybe_unused]] header_t* currentNode) { return false; });
       auto* lastInner = static_cast<inner_t*>(parent);
       pos_t posInner = lastInner->lower_bound(start);
@@ -376,7 +378,8 @@ struct RangeScannable {
             std::cout << "end inner " << lastInner->end() << "\n";
          }
          // inner exhausted need to start new traversal with upper bound for fence keys
-         auto p  = tree.traverse_inner_upper_bound(lastInner->fenceKeys.getUpper().key, []([[maybe_unused]] header_t* currentNode) { return false; });
+         auto p = tree.traverse_inner_upper_bound(lastInner->fenceKeys.getUpper().key,
+                                                  []([[maybe_unused]] header_t* currentNode) { return false; });
          parent = p.first;
          node = p.second;
          lastInner = static_cast<inner_t*>(parent);
@@ -427,11 +430,48 @@ int main() {
       struct RangeTree : public RangeScannable<Tree>, public Tree {};
       RangeTree tree;
       for (int k_i = KEYS; k_i > 0; k_i--) { tree.insert(k_i, k_i); }
-      tree.range_scan(200, 1000, [&](int key, int leaf) {
-         std::cout << "key " << key << "\n";
-         std::cout << "leaf " << leaf << "\n";
-      });
+      size_t keysRetrieved{0};
+      tree.range_scan(200, 1000, [&](int key, int leaf) { keysRetrieved++; });
+      std::cout << "kr " << keysRetrieved << std::endl;
+      if (keysRetrieved != 801) throw std::logic_error("range scan did not find expected key T1");
    }
 
+   {
+      // missing key range test
+      constexpr int KEYS = 1e6;
+      struct RangeTree : public RangeScannable<Tree>, public Tree {};
+      RangeTree tree;
+      for (int k_i = KEYS; k_i > 500; k_i--) { tree.insert(k_i, k_i); }
+      size_t keysRetrieved{0};
+      tree.range_scan(200, 1000, [&](int key, int leaf) { keysRetrieved++; });
+      std::cout << "kr " << keysRetrieved << std::endl;
+      if (keysRetrieved != 500) throw std::logic_error("range scan did not find expected key T2");
+   }
+
+   {
+      // missing key range test
+      constexpr int KEYS = 1e6;
+      struct RangeTree : public RangeScannable<Tree>, public Tree {};
+      RangeTree tree;
+      for (int k_i = KEYS; k_i > 2000; k_i--) { tree.insert(k_i, k_i); }
+      size_t keysRetrieved{0};
+      tree.range_scan(200, 1000, [&](int key, int leaf) { keysRetrieved++; });
+      std::cout << "kr " << keysRetrieved << std::endl;
+      if (keysRetrieved != 0) throw std::logic_error("range scan did not find expected key T3");
+   }
+
+   std::cout << "empty tree test" << std::endl;
+
+   {
+      // test scan on only one node, i.e., root
+      constexpr int KEYS = 10;
+      struct RangeTree : public RangeScannable<Tree>, public Tree {};
+      RangeTree tree;
+      for (int k_i = KEYS; k_i >= 0; k_i--) { tree.insert(k_i, k_i); }
+      size_t keysRetrieved{0};
+      tree.range_scan(1, 10, [&](int key, int leaf) { keysRetrieved++; });
+      std::cout << "kr " << keysRetrieved << std::endl;
+      if (keysRetrieved != 0) throw std::logic_error("range scan did not find expected key T4");
+   }
    return 0;
 }
