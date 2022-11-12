@@ -478,6 +478,19 @@ int main() {
       if (keysRetrieved != 601) throw std::logic_error("range scan did not find expected key T2");
    }
 
+   
+   {
+      // missing key range larger
+      constexpr int KEYS = 800;
+      struct RangeTree : public RangeScannable<Tree>, public Tree {};
+      RangeTree tree;
+      for (int k_i = KEYS; k_i > 1; k_i--) { tree.insert(k_i, k_i); }
+      size_t keysRetrieved{0};
+      tree.range_scan(1000, 100000, [&](int key, int leaf) { keysRetrieved++; });
+      std::cout << "kr " << keysRetrieved << std::endl;
+      if (keysRetrieved != 0) throw std::logic_error("range scan did not find expected key T2");
+   }
+   
    std::cout << "empty tree test" << std::endl;
 
    {
