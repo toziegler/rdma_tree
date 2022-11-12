@@ -43,7 +43,7 @@ struct SeparatorInfo {
 template <class Key>
 struct FenceKeys {
    struct FenceKey {
-      bool isInfinity = true;
+      bool isInfinity{true};
       Key key;
    };
    FenceKey lower;  // exclusive
@@ -357,27 +357,33 @@ struct RangeScannable {
    void range_scan(const key_t& from, const key_t& to, FN scan_function) {
       auto& tree = this->as_btree();
       auto start = from;
+      auto iterate_leaf = [&](leaf_t* leaf) -> bool {
+         pos_t it = leaf->lower_bound(start);
+         while (it != leaf->end()) {
+            if (leaf->key_at(it) > to) return true;
+            scan_function(leaf->key_at(it), leaf->value_at(it));
+            start = leaf->key_at(it);
+            it++;
+         };
+         return false;
+      };
       // setup find first inner node with lowerbound search
       auto [parent, node] = tree.traverse_inner(start, []([[maybe_unused]] header_t* currentNode) { return false; });
+      if (parent == nullptr && node->is_leaf()) {
+         auto leaf = static_cast<leaf_t*>(node);
+         iterate_leaf(leaf);
+         return;
+      }
       auto* lastInner = static_cast<inner_t*>(parent);
       pos_t posInner = lastInner->lower_bound(start);
       while (true) {
-         while (posInner != lastInner->end()) {
+         // since n+1
+         while (posInner <= lastInner->end()) {
             auto leaf = static_cast<leaf_t*>(lastInner->value_at(posInner));
-            pos_t it = leaf->lower_bound(start);
-            std::cout << "start " << start << "\n";
-            std::cout << "leaf it " << it << " end " << leaf->end() << "\n";
-            while (it != leaf->end()) {
-               if (leaf->key_at(it) > to) return;
-               scan_function(leaf->key_at(it), leaf->value_at(it));
-               start = leaf->key_at(it);
-               it++;
-            };
+            auto finished = iterate_leaf(leaf);
             posInner++;
-            std::cout << "pos inner " << posInner << "\n";
-            std::cout << "end inner " << lastInner->end() << "\n";
+            if (finished || leaf->fenceKeys.getUpper().isInfinity) return;
          }
-         // inner exhausted need to start new traversal with upper bound for fence keys
          auto p = tree.traverse_inner_upper_bound(lastInner->fenceKeys.getUpper().key,
                                                   []([[maybe_unused]] header_t* currentNode) { return false; });
          parent = p.first;
@@ -390,7 +396,7 @@ struct RangeScannable {
    // --------------------------------------------------------------------------
   protected:
    Tree& as_btree() { return *reinterpret_cast<Tree*>(this); }
-};  // LeafIterator
+};
 
 #include <random>
 
@@ -437,7 +443,7 @@ int main() {
    }
 
    {
-      // missing key range test
+      // missing key range test from beginning
       constexpr int KEYS = 1e6;
       struct RangeTree : public RangeScannable<Tree>, public Tree {};
       RangeTree tree;
@@ -449,7 +455,7 @@ int main() {
    }
 
    {
-      // missing key range test
+      // missing key range complete
       constexpr int KEYS = 1e6;
       struct RangeTree : public RangeScannable<Tree>, public Tree {};
       RangeTree tree;
@@ -458,6 +464,18 @@ int main() {
       tree.range_scan(200, 1000, [&](int key, int leaf) { keysRetrieved++; });
       std::cout << "kr " << keysRetrieved << std::endl;
       if (keysRetrieved != 0) throw std::logic_error("range scan did not find expected key T3");
+   }
+
+   {
+      // missing key range test from end
+      constexpr int KEYS = 800;
+      struct RangeTree : public RangeScannable<Tree>, public Tree {};
+      RangeTree tree;
+      for (int k_i = KEYS; k_i > 1; k_i--) { tree.insert(k_i, k_i); }
+      size_t keysRetrieved{0};
+      tree.range_scan(200, 1000, [&](int key, int leaf) { keysRetrieved++; });
+      std::cout << "kr " << keysRetrieved << std::endl;
+      if (keysRetrieved != 601) throw std::logic_error("range scan did not find expected key T2");
    }
 
    std::cout << "empty tree test" << std::endl;
@@ -471,7 +489,7 @@ int main() {
       size_t keysRetrieved{0};
       tree.range_scan(1, 10, [&](int key, int leaf) { keysRetrieved++; });
       std::cout << "kr " << keysRetrieved << std::endl;
-      if (keysRetrieved != 0) throw std::logic_error("range scan did not find expected key T4");
+      if (keysRetrieved != 10) throw std::logic_error("range scan did not find expected key T4");
    }
    return 0;
 }
