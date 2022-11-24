@@ -6,8 +6,21 @@
 #include <iostream>
 #include <limits>
 #include <optional>
-#include <gflags/gflags.h> 
 #define GDB() std::raise(SIGINT);
+
+/*
+  InnerTraversals
+  - one-sided
+  - two-sided stub on the client
+  - local for the two-sided on the server
+  LeafTraversals
+  - one-sided
+  - two-sided stub on the client
+  - local for the two-sided server
+  - hybrid on the server which just sends the last inner node
+
+  - one-sided/ local and hybrid can share the same btree trait
+*/
 
 constexpr uint64_t SIZE = 4096;
 enum class NodeType : uint8_t { INNER = 1, LEAF = 2 };
@@ -229,139 +242,169 @@ struct BTreeInner : BTreeNodeTrait<BTreeInner<Key, Value>, Key, Value, NODE_SIZE
    }
 };
 
-
-// does the traversal until the leaf layer and then hands over to the leaf logic 
-namespace inner{
-
-struct InnerTraversalAbstract{};
-
-template<typename InnerNode>
-struct Traversal : public InnerTraversalAbstract{
-
-   void traverse(/* metadata */){
-      // get root and height from md
-      // iterate until we reach last inner node
-      // return last inner node 
-   }
-   // traverse // goes down 
-   // ensure_space -> iterates and finds tosplit node 
-   // try_split -> splits inner path if no space 
-   // try_complete_leaf_split(Sep, TmpPtr) -> if fails dealloc tmpptr and ensure space on inner path
-   
+template <typename InnerNode, typename LeafNode>
+struct BTreeTrait {
+   using leaf_t = LeafNode;
+   using key_t = typename leaf_t::key_t;
+   using value_t = typename leaf_t::value_t;
 };
-}
 
-// template <typename InnerPolicy, typename LeafPolicy>
-// struct BTreeTrait {
-//    using leaf_t = LeafNode;
-//    using key_t = typename leaf_t::key_t;
-//    using value_t = typename leaf_t::value_t;
-// };
+template <typename InnerNode, typename LeafNode>
+struct BTree : public BTreeTrait<InnerNode, LeafNode> {
+   using super_t = BTreeTrait<InnerNode, LeafNode>;
+   using self_t = BTree<InnerNode, LeafNode>;
+   using header_t = BTreeNodeHeader;
+   using leaf_t = LeafNode;
+   using inner_t = InnerNode;
+   using typename super_t::key_t;
+   using typename super_t::value_t;
+   BTreeNodeHeader* root;
+   BTree() : root(new LeafNode()) {}
 
-// template <typename InnerNode, typename LeafNode>
-// struct BTree : public BTreeTrait<InnerNode, LeafNode> {
-//    using super_t = BTreeTrait<InnerNode, LeafNode>;
-//    using self_t = BTree<InnerNode, LeafNode>;
-//    using header_t = BTreeNodeHeader;
-//    using leaf_t = LeafNode;
-//    using inner_t = InnerNode;
-//    using typename super_t::key_t;
-//    using typename super_t::value_t;
-//    BTreeNodeHeader* root;
-//    BTree() : root(new LeafNode()) {}
+   template <typename FN>
+   std::pair<header_t*, header_t*> traverse_inner(const key_t& key, FN stop_condition) {
+      header_t* parent = nullptr;
+      header_t* node = root;
+      while (!node->is_leaf() && !stop_condition(node)) {
+         auto inner = static_cast<InnerNode*>(node);
+         parent = node;
+         node = inner->next_child(key);
+      }
+      return {parent, node};
+   }
 
-//    template <typename FN>
-//    std::pair<header_t*, header_t*> traverse_inner(const key_t& key, FN stop_condition) {
-//       header_t* parent = nullptr;
-//       header_t* node = root;
-//       while (!node->is_leaf() && !stop_condition(node)) {
-//          auto inner = static_cast<InnerNode*>(node);
-//          parent = node;
-//          node = inner->next_child(key);
-//       }
-//       return {parent, node};
-//    }
+   template <typename FN>
+   std::pair<header_t*, header_t*> traverse_inner_upper_bound(const key_t& key, FN stop_condition) {
+      header_t* parent = nullptr;
+      header_t* node = root;
+      while (!node->is_leaf() && !stop_condition(node)) {
+         auto inner = static_cast<InnerNode*>(node);
+         parent = node;
+         auto pos = inner->upper_bound(key);
+         node = inner->values[pos];
+      }
+      return {parent, node};
+   }
 
-//    template <typename FN>
-//    std::pair<header_t*, header_t*> traverse_inner_upper_bound(const key_t& key, FN stop_condition) {
-//       header_t* parent = nullptr;
-//       header_t* node = root;
-//       while (!node->is_leaf() && !stop_condition(node)) {
-//          auto inner = static_cast<InnerNode*>(node);
-//          parent = node;
-//          auto pos = inner->upper_bound(key);
-//          node = inner->values[pos];
-//       }
-//       return {parent, node};
-//    }
+   bool lookup(const key_t& key, value_t& retValue) {
+      auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
+      auto leaf = static_cast<LeafNode*>(node);
+      auto idx = leaf->lower_bound(key);
+      if (idx == leaf->end() && leaf->key_at(idx) != key) return false;
+      retValue = leaf->value_at(idx);
+      return true;
+   }
 
-//    bool lookup(const key_t& key, value_t& retValue) {
-//       auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
-//       auto leaf = static_cast<LeafNode*>(node);
-//       auto idx = leaf->lower_bound(key);
-//       if (idx == leaf->end() && leaf->key_at(idx) != key) return false;
-//       retValue = leaf->value_at(idx);
-//       return true;
-//    }
+   void ensure_space(header_t* toSplit, key_t key) {
+      auto [parent, node] = traverse_inner(key, [&](header_t* currentNode) { return currentNode == toSplit; });
+      while (!node->is_leaf() && node != toSplit) {
+         auto inner = static_cast<InnerNode*>(node);
+         parent = node;
+         node = inner->next_child(key);
+      }
+      if (node == toSplit) return try_split(node, parent, key);
+      throw std::logic_error("could not find node");
+   }
 
-//    void ensure_space(header_t* toSplit, key_t key) {
-//       auto [parent, node] = traverse_inner(key, [&](header_t* currentNode) { return currentNode == toSplit; });
-//       while (!node->is_leaf() && node != toSplit) {
-//          auto inner = static_cast<InnerNode*>(node);
-//          parent = node;
-//          node = inner->next_child(key);
-//       }
-//       if (node == toSplit) return try_split(node, parent, key);
-//       throw std::logic_error("could not find node");
-//    }
+   void try_split(header_t* node, header_t* parent, const key_t& key) {
+      if (node == root) {
+         parent = new InnerNode();
+         root = parent;
+      }
+      if (static_cast<InnerNode*>(parent)->has_space()) {
+         SeparatorInfo<key_t> sep;
+         if (node->is_leaf())
+            sep = static_cast<LeafNode*>(node)->split();
+         else
+            sep = static_cast<InnerNode*>(node)->split();
+         static_cast<InnerNode*>(parent)->insert(sep.sep, node, sep.rightNode);
+         return;
+      }
+      // split parent
+      ensure_space(parent, key);
+   }
 
-//    void try_split(header_t* node, header_t* parent, const key_t& key) {
-//       if (node == root) {
-//          parent = new InnerNode();
-//          root = parent;
-//       }
-//       if (static_cast<InnerNode*>(parent)->has_space()) {
-//          SeparatorInfo<key_t> sep;
-//          if (node->is_leaf())
-//             sep = static_cast<LeafNode*>(node)->split();
-//          else
-//             sep = static_cast<InnerNode*>(node)->split();
-//          static_cast<InnerNode*>(parent)->insert(sep.sep, node, sep.rightNode);
-//          return;
-//       }
-//       // split parent
-//       ensure_space(parent, key);
-//    }
+   void insert(const key_t& key, const value_t& value) {
+      for (uint64_t repeatCounter = 0;; repeatCounter++) {
+         auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
+         auto leaf = static_cast<LeafNode*>(node);
+         if (leaf->has_space()) {
+            leaf->insert(key, value);
+            return;
+         }
+         try_split(leaf, parent, key);
+      }
+   }
 
-//    void insert(const key_t& key, const value_t& value) {
-//       for (uint64_t repeatCounter = 0;; repeatCounter++) {
-//          auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
-//          auto leaf = static_cast<LeafNode*>(node);
-//          if (leaf->has_space()) {
-//             leaf->insert(key, value);
-//             return;
-//          }
-//          try_split(leaf, parent, key);
-//       }
-//    }
+   bool update(const key_t& key, const value_t& value) {
+      auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
+      auto leaf = static_cast<LeafNode*>(node);
+      return leaf->update(key, value);
+   }
+};
 
-//    bool update(const key_t& key, const value_t& value) {
-//       auto [parent, node] = traverse_inner(key, []([[maybe_unused]] header_t* currentNode) { return false; });
-//       auto leaf = static_cast<LeafNode*>(node);
-//       return leaf->update(key, value);
-//    }
-// };
+// scan
+template <typename Tree>
+struct RangeScannable {
+   using leaf_t = typename Tree::leaf_t;
+   using inner_t = typename Tree::inner_t;
+   using key_t = typename leaf_t::key_t;
+   using pos_t = typename leaf_t::Pos;
+   using value_t = typename leaf_t::value_t;
+   using header_t = typename Tree::header_t;
+   // --------------------------------------------------------------------------
+   template <typename FN>
+   void range_scan(const key_t& from, const key_t& to, FN scan_function) {
+      auto& tree = this->as_btree();
+      auto start = from;
+      auto iterate_leaf = [&](leaf_t* leaf) -> bool {
+         pos_t it = leaf->lower_bound(start);
+         while (it != leaf->end()) {
+            if (leaf->key_at(it) > to) return true;
+            scan_function(leaf->key_at(it), leaf->value_at(it));
+            start = leaf->key_at(it);
+            it++;
+         };
+         return false;
+      };
+      // setup find first inner node with lowerbound search
+      auto [parent, node] = tree.traverse_inner(start, []([[maybe_unused]] header_t* currentNode) { return false; });
+      if (parent == nullptr && node->is_leaf()) {
+         auto leaf = static_cast<leaf_t*>(node);
+         iterate_leaf(leaf);
+         return;
+      }
+      auto* lastInner = static_cast<inner_t*>(parent);
+      pos_t posInner = lastInner->lower_bound(start);
+      while (true) {
+         // since n+1
+         while (posInner <= lastInner->end()) {
+            auto leaf = static_cast<leaf_t*>(lastInner->value_at(posInner));
+            auto finished = iterate_leaf(leaf);
+            posInner++;
+            if (finished || leaf->fenceKeys.getUpper().isInfinity) return;
+         }
+         auto p = tree.traverse_inner_upper_bound(lastInner->fenceKeys.getUpper().key,
+                                                  []([[maybe_unused]] header_t* currentNode) { return false; });
+         parent = p.first;
+         node = p.second;
+         lastInner = static_cast<inner_t*>(parent);
+         posInner = lastInner->lower_bound(lastInner->fenceKeys.getLower().key);
+         start = lastInner->fenceKeys.getLower().key;
+      }
+   }
+   // --------------------------------------------------------------------------
+  protected:
+   Tree& as_btree() { return *reinterpret_cast<Tree*>(this); }
+};
 
 #include <random>
 
-int main(int argc, char* argv[]) {
+int main() {
    using Leaf = BTreeLeaf<int, int>;
    using Inner = BTreeInner<int, BTreeNodeHeader*>;
+   using Tree = BTree<Inner, Leaf>;
 
-   gflags::SetUsageMessage("Catalog Test");
-   gflags::ParseCommandLineFlags(&argc, &argv, true);
-
-   /*
    {
       BTree<Inner, Leaf> tree;
 
@@ -461,6 +504,5 @@ int main(int argc, char* argv[]) {
       std::cout << "kr " << keysRetrieved << std::endl;
       if (keysRetrieved != 10) throw std::logic_error("range scan did not find expected key T4");
    }
-   */
    return 0;
 }

@@ -2,7 +2,7 @@ project('rdma_tree', ['c', 'cpp'],
     version: '1.0.0',
     default_options: [
         # 'werror=true',
-        'warning_level=3',
+        # 'warning_level=3',
         'c_std=c11',
         'cpp_std=c++20',
         # 'buildtype=release',
@@ -24,8 +24,10 @@ project_sources = []
 project_mains = []
 
 project_includes = [
-    include_directories('.'),
+  include_directories('.'),
+  include_directories('shared-headers'),
 ]
+
 thread_dep = dependency('threads', required : true)
 
 # cmake = import('cmake')
@@ -35,6 +37,7 @@ thread_dep = dependency('threads', required : true)
 cpp_compiler = meson.get_compiler('cpp')
 
 numa_dep = cpp_compiler.find_library('numa', has_headers: ['numa.h'], required: true)
+gflags_dep = cpp_compiler.find_library('gflags', required: true)
 
 # libumad = cc.find_library('ibumad', required: get_option('rdma'))
 rdma_libs = [
@@ -44,18 +47,15 @@ rdma_libs = [
 rdma_dep = declare_dependency(dependencies: rdma_libs)
 
 # This triggers the builds of sources
-# subdir('flows')
-# subdir('utils')
-
+subdir('backend/farm')
+subdir('frontend')
 
 project_deps = [
     thread_dep,
     numa_dep,
     rdma_dep,
+    gflags_dep,
 ]
-
-
-
 
 project_mains += files(
     'btree.cpp',
