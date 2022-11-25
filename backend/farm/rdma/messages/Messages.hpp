@@ -10,7 +10,9 @@ namespace rdma {
 enum class MESSAGE_TYPE : uint8_t {
    Empty = 0,  // 0 initialized
    Finish = 1,
-   RemoteWrite = 2,
+   Insert = 2,
+   Lookup = 3,
+   Scan = 4,
    // -------------------------------------------------------------------------------------
    // -------------------------------------------------------------------------------------
    Init = 99,
@@ -35,6 +37,7 @@ struct InitMessage {
    uintptr_t mbResponseOffset;  // for page provider only
    uintptr_t plResponseOffset;
    uintptr_t barrierAddr;
+   uintptr_t scanResultOffset; // offset to receive scan result 
    NodeID nodeId;  // node id of buffermanager the initiator belongs to
    uint64_t threadId;
    uint64_t num_tables;
@@ -54,18 +57,46 @@ struct FinishRequest : public Message {
 };
 
 // -------------------------------------------------------------------------------------
-struct RemoteWriteRequest : public Message{
-   RemoteWriteRequest() : Message(MESSAGE_TYPE::RemoteWrite){}
+struct InsertRequest : public Message{
+   InsertRequest() : Message(MESSAGE_TYPE::Insert){}
    // hack hard coded as we only sent ycsb tuples or smaller
-   uint8_t buffer[3*64];
-   uint64_t addr;
+   Key key;
+   Value value;
    NodeID nodeId;
 };
 
-struct RemoteWriteResponse : public Message{
-   RemoteWriteResponse() : Message(MESSAGE_TYPE::RemoteWrite){}
-   uint64_t addr;
+struct InsertResponse : public Message{
+   InsertResponse() : Message(MESSAGE_TYPE::Insert){}
+   RESULT rc;
+   uint8_t receiveFlag = 1;
+};
+// -------------------------------------------------------------------------------------
+struct LookupRequest : public Message{
+   LookupRequest() : Message(MESSAGE_TYPE::Lookup){}
+   // hack hard coded as we only sent ycsb tuples or smaller
+   Key key;
    NodeID nodeId;
+};
+
+struct LookupResponse : public Message{
+   LookupResponse() : Message(MESSAGE_TYPE::Lookup){}
+   Value value;
+   RESULT rc;
+   uint8_t receiveFlag = 1;
+};
+// -------------------------------------------------------------------------------------
+struct ScanRequest : public Message{
+   ScanRequest() : Message(MESSAGE_TYPE::Scan){}
+   // hack hard coded as we only sent ycsb tuples or smaller
+   Key from;
+   Key to;
+   NodeID nodeId;
+};
+
+// result is transferred one sided 
+struct ScanResponse : public Message{
+   ScanResponse() : Message(MESSAGE_TYPE::Scan){}
+   size_t length;
    RESULT rc;
    uint8_t receiveFlag = 1;
 };
@@ -74,8 +105,12 @@ struct RemoteWriteResponse : public Message{
 // Get size of Largest Message
 union ALLDERIVED {
    FinishRequest fm;
-   RemoteWriteRequest rwr;
-   RemoteWriteResponse rwresp;
+   InsertRequest ir;
+   InsertResponse irr;
+   LookupRequest lr;
+   LookupResponse lrr;
+   ScanRequest scr;
+   ScanResponse scrr;
 };
 
 static constexpr uint64_t LARGEST_MESSAGE = sizeof(ALLDERIVED);

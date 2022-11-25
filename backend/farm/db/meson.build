@@ -1,5 +1,5 @@
 project_headers += files(
-  'PartitionedTable.hpp'
+  'btree.hpp',
 )
 project_sources += files(
 )

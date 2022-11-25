@@ -1,79 +1,128 @@
 #include "Defs.hpp"
 #include "PerfEvent.hpp"
-#include "farm/Farm.hpp"
+#include "farm/Compute.hpp"
 #include "farm/Config.hpp"
-#include "farm/threads/Concurrency.hpp"
-#include "farm/profiling/counters/WorkerCounters.hpp"
+#include "farm/Storage.hpp"
 #include "farm/profiling/ProfilingThread.hpp"
+#include "farm/profiling/counters/WorkerCounters.hpp"
+#include "farm/threads/Concurrency.hpp"
 #include "farm/utils/RandomGenerator.hpp"
 #include "farm/utils/Time.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 // -------------------------------------------------------------------------------------
-#include <iostream>
+#include <charconv>
 #include <chrono>
 #include <fstream>
+#include <iostream>
 #include <random>
 // -------------------------------------------------------------------------------------
+DEFINE_string(percentage_keys, "",
+              "percentage of keys per node, must be space delimited and integer scaled 100 -> 1.0");
+DEFINE_uint64(keys, 100, "Number keys accross all nodes");
+DEFINE_uint64(cid, 0, "Compute node id");
 
+//=== Input parsing ===//
+static std::vector<unsigned> interpretGflagString(std::string_view desc) {
+   std::vector<unsigned> splitted;
+   auto add = [&](std::string_view desc) {
+      unsigned c = 0;
+      std::from_chars(desc.data(), desc.data() + desc.length(), c);
+      splitted.push_back(c);
+   };
+   while (desc.find(' ') != std::string_view::npos) {
+      auto split = desc.find(' ');
+      add(desc.substr(0, split));
+      desc = desc.substr(split + 1);
+   }
+   add(desc);
+   return splitted;
+}
 
-template <u64 size>
-struct BytesPayload {
-   uint8_t value[size];
-   BytesPayload() = default;
-   bool operator==(BytesPayload& other) { return (std::memcmp(value, other.value, sizeof(value)) == 0); }
-   bool operator!=(BytesPayload& other) { return !(operator==(other)); }
-};
+//=== Partitioning ===//
+// [begin,end) without end and does not handle left overs
+std::pair<Key, Key> partition(uint64_t id, std::vector<double> prob, uint64_t N) {
+   uint64_t begin{0}, end{0};
+   for (uint64_t i = 0; i <= id; ++i) {
+      begin += end;
+      end = static_cast<uint64_t>(static_cast<double>(N) * prob[i]);
+   }
+   return {begin, begin + end};
+}
+// equi partitioning
+std::pair<Key, Key> equi_partition(uint64_t id, uint64_t participants, uint64_t N) {
+   const uint64_t blockSize = N / participants;
+   auto begin = id * blockSize;
+   auto end = begin + blockSize;
+   if (id == participants - 1) end = N;
+   return {begin, end};
+}
 
-struct ycsb_t {
-   static constexpr int id = 0;
-   uint64_t key;
-   uint64_t counter = 0;
-   BytesPayload<128> value;
+void storage_node(){
+   using namespace farm;
+   Storage store;
+   store.startMessageHandler();
+   sleep(5);
+}
 
-   std::string toString() { return std::to_string(key) + " "+ std::to_string(counter) + " "+ std::string((char*)value.value); };
-};
-
-// -------------------------------------------------------------------------------------
-struct Partition {
-   uint64_t begin;
-   uint64_t end;
-};
-// -------------------------------------------------------------------------------------
-int main(int argc, char *argv[])
-{
+//=== Main ===//
+int main(int argc, char* argv[]) {
    using namespace farm;
    gflags::SetUsageMessage("FaRM Frontend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-   FaRM db;
-   db.registerTable<ycsb_t>("ycsb",0,100);
-   db.startAndConnect();
-
-   [[maybe_unused]] auto& table = db.getTable("ycsb");
-
-   table.bulk_load_local<ycsb_t>([](uint64_t t_id, ycsb_t& record) {
-      record.key = t_id;
-      record.counter = 0;
-      farm::utils::RandomGenerator::getRandString(reinterpret_cast<uint8_t*>(&record.value), sizeof(ycsb_t::value));
-      std::cout << "original " << record.toString() << std::endl;
-   });
-   table.printTable<ycsb_t>();
-
-   db.getWorkerPool().scheduleJobSync(0, [&]() {
-      for(uint64_t t_id = 0; t_id < 100; t_id++){
-         ycsb_t record;
-         table.lookup<ycsb_t>(t_id, record);
-         std::cout << "latch-free " << t_id << " " << record.toString() << std::endl;
+   //=== Node Partitions ===//
+   std::vector<std::pair<Key,Key>> partition_map; // maps partitions to node_id [begin,end)
+   {
+      std::vector<double> percentage_keys;
+      // percentage has been supplied by the user other wise equi partition
+      if (!FLAGS_percentage_keys.empty()) {
+         auto tmp_pkeys = interpretGflagString(FLAGS_percentage_keys);
+         for (auto pk : tmp_pkeys) { percentage_keys.push_back(pk / 100.0); }
+      }else{
+         percentage_keys.resize(FLAGS_storage_nodes);
+         for (auto& pk : percentage_keys) { pk = 100.0 / (double)FLAGS_storage_nodes; }
       }
-      for(uint64_t inc = 0; inc < 100; inc++){
-         for(uint64_t t_id = 0; t_id < 100; t_id++){
-            ycsb_t record;
-            table.readModifyWrite<ycsb_t>(t_id, [](ycsb_t& record) { record.counter++; });
-         }
+      for (uint64_t s_i = 0; s_i < FLAGS_storage_nodes; s_i++)
+         partition_map.push_back(partition(s_i, percentage_keys, FLAGS_keys));
+   }
+   
+   if (FLAGS_storage_node) {
+      storage_node();
+   } else {
+      std::cout << "started compute node" << std::endl;
+      Compute comp;
+      comp.startAndConnect();
+      //=== build tree ===//
+      // get compute node partition
+      const auto part = equi_partition(FLAGS_cid, FLAGS_compute_nodes, FLAGS_keys);
+      for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
+         comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
+            auto nodeKeys = part.second - part.first;
+            auto threadPartition = equi_partition(t_i, FLAGS_worker, nodeKeys);
+            auto begin = part.first + threadPartition.first;
+            auto end = part.first + threadPartition.second;
+            
+            for (Key k = begin; k < end; ++k) {
+               Value v = k;
+               threads::Worker::my().insert(0, k, v);
+               threads::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+            }
+         });
       }
-   });
-
-   table.printTable<ycsb_t>();
-
+      // XXX: Use and test barrier
+      // XXX: Profiling
+      // XXX: Benchmark time
+      // XXX: Benchmark Workload 
+      //=== Benchmark ===//
+      for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
+         comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
+            auto s = threads::Worker::my().scan(0, 1, 99);
+            for (auto& kv : s) { std::cout << "key " << kv.key << " " << kv.value << "\n"; }
+         });
+      }
+      comp.getWorkerPool().joinAll();
+      std::cout << "finishing"
+                << "\n";
+   }
    return 0;
 }

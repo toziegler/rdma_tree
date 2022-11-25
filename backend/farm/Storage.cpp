@@ -1,4 +1,4 @@
-#include "Farm.hpp"
+#include "Storage.hpp"
 // -------------------------------------------------------------------------------------
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -7,18 +7,18 @@
 #include <termios.h>
 #include <unistd.h>
 // -------------------------------------------------------------------------------------
-namespace tree {
-FaRM::FaRM() {
+namespace farm {
+Storage::Storage() {
    // -------------------------------------------------------------------------------------
    // find node id
-   if (FLAGS_nodes != 1) {
-      for (; nodeId < FLAGS_nodes; nodeId++) {
-         if (FLAGS_ownIp == NODES[FLAGS_nodes][nodeId]) break;
+   if (FLAGS_storage_nodes != 1) {
+      for (; nodeId < FLAGS_storage_nodes; nodeId++) {
+         if (FLAGS_ownIp == NODES[FLAGS_storage_nodes][nodeId]) break;
       }
    } else {
       nodeId = 0;  // fix to allow single node use on all nodes
    }
-   ensure(nodeId < FLAGS_nodes);
+   ensure(nodeId < FLAGS_storage_nodes);
    // -------------------------------------------------------------------------------------
    // order of construction is important
    cm = std::make_unique<rdma::CM<rdma::InitMessage>>();
@@ -27,9 +27,8 @@ FaRM::FaRM() {
    *barrier=0;
 }
 
-FaRM::~FaRM() {
+Storage::~Storage() {
    stopProfiler();
-   workerPool.reset();  // important clients need to disconnect first
    mh.reset();
 }
 }  // namespace nam

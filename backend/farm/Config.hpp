@@ -23,7 +23,9 @@ DECLARE_bool(backoff);
 // -------------------------------------------------------------------------------------
 // RDMA Config
 // -------------------------------------------------------------------------------------
-DECLARE_uint64(nodes);
+DECLARE_uint64(storage_nodes);
+DECLARE_bool(storage_node); // true if it is a storage node 
+DECLARE_uint64(compute_nodes);
 DECLARE_string(ownIp);
 DECLARE_double(rdmaMemoryFactor); // factor to be multiplied by dramGB
 DECLARE_uint32(port);

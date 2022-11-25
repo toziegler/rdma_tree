@@ -1,0 +1,3 @@
+[binaries]
+c = 'gcc-11'
+cpp = 'g++-11'

@@ -6,39 +6,31 @@
 #include "rdma/MessageHandler.hpp"
 #include "threads/CoreManager.hpp"
 #include "threads/WorkerPool.hpp"
-#include "db/PartitionedTable.hpp"
 #include "farm/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <memory>
 
 namespace farm
 {
-// -------------------------------------------------------------------------------------
-// avoids destruction of objects before remote side finished
-struct RemoteGuard{
-   std::atomic<uint64_t>& numberRemoteConnected;
-   RemoteGuard(std::atomic<uint64_t>& numberRemoteConnected) : numberRemoteConnected(numberRemoteConnected){};
-   ~RemoteGuard(){ while(numberRemoteConnected);}
-};
 
 // -------------------------------------------------------------------------------------
-class FaRM
+class Compute
 {
   public:
    //! Default constructor
-   FaRM();
+   Compute();
    //! Destructor
-   ~FaRM();
+   ~Compute();
    // -------------------------------------------------------------------------------------
    // Deleted constructors
    //! Copy constructor
-   FaRM(const FaRM& other) = delete;
+   Compute(const Compute& other) = delete;
    //! Move constructor
-   FaRM(FaRM&& other) noexcept = delete;
+   Compute(Compute&& other) noexcept = delete;
    //! Copy assignment operator
-   FaRM& operator=(const FaRM& other) = delete;
+   Compute& operator=(const Compute& other) = delete;
    //! Move assignment operator
-   FaRM& operator=(FaRM&& other) noexcept = delete;
+   Compute& operator=(Compute&& other) noexcept = delete;
    // -------------------------------------------------------------------------------------
    threads::WorkerPool& getWorkerPool() { return *workerPool; }
    // -------------------------------------------------------------------------------------
@@ -64,34 +56,16 @@ class FaRM
       
    // -------------------------------------------------------------------------------------
    void startAndConnect() {
-      mh = std::make_unique<rdma::MessageHandler>(*cm, *this, nodeId);
       workerPool = std::make_unique<threads::WorkerPool>(*cm, nodeId);
    };
-
-   template<class Record>
-   void registerTable(std::string name, uint64_t begin, uint64_t end){
-      if (catalog.count(name)) throw;
-      catalog[name] = new db::PartitionedTable(Record::id, ((db::numberFaRMCachelines<Record>())*64),begin,end,nodeId,*cm);
-   }
-
-   db::PartitionedTable& getTable(std::string name){
-      if (!catalog.count(name)) throw;
-      return *catalog[name];
-   }
-
-   uint64_t* barrier;
-   std::unordered_map<std::string,db::PartitionedTable*> catalog;
    
   private:
    NodeID nodeId = 0;
-   std::unique_ptr<rdma::MessageHandler> mh;
    std::unique_ptr<rdma::CM<rdma::InitMessage>> cm;
    std::unique_ptr<threads::WorkerPool> workerPool;
    std::unique_ptr<profiling::RDMACounters> rdmaCounters;
    profiling::ProfilingThread pt;
    std::vector<std::thread> profilingThread;
-
-
 };
 // -------------------------------------------------------------------------------------
 }  // namespace scalestore

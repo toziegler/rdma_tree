@@ -64,10 +64,18 @@ inline void DO_NOT_OPTIMIZE(T const& value)
       assert(false);      \
    }
 
+// Btree key and value 
+using Key = uint64_t;
+using Value = uint64_t;
+struct KVPair{
+   Key key;
+   Value value;
+};
 using u64 = uint64_t;
 using s32 = int32_t;
 constexpr size_t CACHE_LINE = 64;
 constexpr size_t MAX_NODES = 64; // only supported due to bitmap
+constexpr size_t MAX_SCAN_RESULT = 100; // 100 rows
 constexpr size_t PARTITIONS = 64;  // partitions for partitioned queue 
 constexpr size_t BATCH_SIZE = 128; // for partitioned queue 
 constexpr bool USE_BACKOFF = true;

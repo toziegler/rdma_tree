@@ -16,7 +16,9 @@ DEFINE_uint32(page_pool_partitions, 8, "page pool partitions each is shifted by 
 // -------------------------------------------------------------------------------------
 DEFINE_bool(backoff, true, "backoff enabled");
 // -------------------------------------------------------------------------------------
-DEFINE_uint64(nodes, 1,"Number nodes participating");
+DEFINE_bool(storage_node, false, "is storage node? ");
+DEFINE_uint64(compute_nodes, 1,"Number nodes participating");
+DEFINE_uint64(storage_nodes, 1,"Number nodes participating");
 DEFINE_double(rdmaMemoryFactor, 1.1, "Factor to be multiplied by dramGB"); // factor to be multiplied by dramGB
 DEFINE_uint32(port, 7174, "port");
 DEFINE_string(ownIp, "172.18.94.80", "own IP server");

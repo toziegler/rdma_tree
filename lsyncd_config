@@ -1,0 +1,49 @@
+settings {
+   nodaemon = true,
+}
+
+hosts = {
+    { ip='tziegler@10.0.2.11', port=22 },
+    { ip='tziegler@10.0.2.12', port=22 },
+    { ip='tziegler@10.0.2.13', port=22 },
+    { ip='tziegler@10.0.2.14', port=22 },
+    { ip='tziegler@10.0.2.15', port=22 },
+    { ip='tziegler@10.0.2.16', port=22 },
+    { ip='tziegler@10.0.2.17', port=22 },
+    { ip='tziegler@10.0.2.18', port=22 },
+    --{ ip='tziegler@10.0.2.19', port=22 },
+    --{ ip='tziegler@10.0.2.215', port=22 },
+    --{ ip='ubuntu@10.0.2.11', port=2022 },
+    --{ ip='ubuntu@10.0.2.12', port=2022 },
+    --{ ip='ubuntu@10.0.2.13', port=2022 },
+    --{ ip='ubuntu@10.0.2.14', port=2022 },
+    --{ ip='ubuntu@10.0.2.15', port=2022 },
+    --{ ip='ubuntu@10.0.2.16', port=2022 },
+    --{ ip='ubuntu@10.0.2.17', port=2022 },
+    --{ ip='ubuntu@10.0.2.18', port=2022 },
+}
+
+-- ssh-copy-id -p 2022 ubuntu@10.0.2.17
+-- ssh-copy-id -p 2022 ubuntu@10.0.2.18
+
+
+for _, host in ipairs(hosts)
+do
+  sync {
+    default.rsyncssh,
+    source = ".",
+    targetdir = "./rdma_tree",
+    host = host.ip,
+    delay = 0,
+    ssh = {
+      port = host.port
+    },
+    rsync = {
+      perms = true,
+    },
+    filter = {
+      '- .git/',
+      '- build/',
+    },
+  }
+end

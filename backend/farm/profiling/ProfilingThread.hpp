@@ -148,7 +148,8 @@ struct ProfilingThread {
                csv_file << "LLC-misses/tx , ";
                csv_file << "CPUs  , ";
                csv_file << "Workers ,";
-               csv_file << "Nodes ,";
+               csv_file << "StorageNodes ,";
+               csv_file << "ComputeNodes ,";
                csv_file << "NodeId ,";
                csv_file << "PPThreads ,";
                csv_file << "Cooling ,";
@@ -220,7 +221,8 @@ struct ProfilingThread {
             csv_file << cpuCountersAgg["LLC-misses"] / tx_p << " , ";
             csv_file << cpuCountersAgg["CPU"] << " , ";
             csv_file << FLAGS_worker << " , ";
-            csv_file << FLAGS_nodes << " , ";
+            csv_file << FLAGS_storage_nodes << " , ";
+            csv_file << FLAGS_compute_nodes << " , ";
             csv_file << nodeId << " , ";
             csv_file << FLAGS_pageProviderThreads << " , ";
             csv_file << FLAGS_coolingPercentage << " , ";

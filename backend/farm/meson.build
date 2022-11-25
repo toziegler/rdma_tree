@@ -1,10 +1,15 @@
 project_headers += files(
   'Config.hpp',
-  'Farm.hpp'
+  # 'Farm.hpp',
+  'Storage.hpp',
+  'Compute.hpp',
+  
 )
 project_sources += files(
   'Config.cpp',
-  'Farm.cpp'
+  # 'Farm.cpp',
+  'Storage.cpp',
+  'Compute.cpp',
 )
 project_mains += files(
 )

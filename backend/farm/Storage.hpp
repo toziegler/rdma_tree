@@ -6,7 +6,7 @@
 #include "rdma/MessageHandler.hpp"
 #include "threads/CoreManager.hpp"
 #include "threads/WorkerPool.hpp"
-#include "db/PartitionedTable.hpp"
+#include "db/btree.hpp"
 #include "farm/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <memory>
@@ -22,25 +22,23 @@ struct RemoteGuard{
 };
 
 // -------------------------------------------------------------------------------------
-class FaRM
+class Storage
 {
   public:
    //! Default constructor
-   FaRM();
+   Storage();
    //! Destructor
-   ~FaRM();
+   ~Storage();
    // -------------------------------------------------------------------------------------
    // Deleted constructors
    //! Copy constructor
-   FaRM(const FaRM& other) = delete;
+   Storage(const Storage& other) = delete;
    //! Move constructor
-   FaRM(FaRM&& other) noexcept = delete;
+   Storage(Storage&& other) noexcept = delete;
    //! Copy assignment operator
-   FaRM& operator=(const FaRM& other) = delete;
+   Storage& operator=(const Storage& other) = delete;
    //! Move assignment operator
-   FaRM& operator=(FaRM&& other) noexcept = delete;
-   // -------------------------------------------------------------------------------------
-   threads::WorkerPool& getWorkerPool() { return *workerPool; }
+   Storage& operator=(Storage&& other) noexcept = delete;
    // -------------------------------------------------------------------------------------
    rdma::CM<rdma::InitMessage>& getCM() { return *cm; }
    // -------------------------------------------------------------------------------------
@@ -63,30 +61,21 @@ class FaRM
    };
       
    // -------------------------------------------------------------------------------------
-   void startAndConnect() {
+   void startMessageHandler() {
       mh = std::make_unique<rdma::MessageHandler>(*cm, *this, nodeId);
-      workerPool = std::make_unique<threads::WorkerPool>(*cm, nodeId);
    };
 
-   template<class Record>
-   void registerTable(std::string name, uint64_t begin, uint64_t end){
-      if (catalog.count(name)) throw;
-      catalog[name] = new db::PartitionedTable(Record::id, ((db::numberFaRMCachelines<Record>())*64),begin,end,nodeId,*cm);
-   }
-
-   db::PartitionedTable& getTable(std::string name){
-      if (!catalog.count(name)) throw;
-      return *catalog[name];
-   }
-
    uint64_t* barrier;
-   std::unordered_map<std::string,db::PartitionedTable*> catalog;
+
+   auto& getTree(){
+      return tree;
+   }
    
   private:
    NodeID nodeId = 0;
+   twosided::BTree<Key,Value> tree;
    std::unique_ptr<rdma::MessageHandler> mh;
    std::unique_ptr<rdma::CM<rdma::InitMessage>> cm;
-   std::unique_ptr<threads::WorkerPool> workerPool;
    std::unique_ptr<profiling::RDMACounters> rdmaCounters;
    profiling::ProfilingThread pt;
    std::vector<std::thread> profilingThread;

@@ -1,6 +1,6 @@
 #include "MessageHandler.hpp"
 #include "Defs.hpp"
-#include "farm/Farm.hpp"
+#include "farm/Storage.hpp"
 #include "farm/threads/CoreManager.hpp"
 #include "farm/threads/ThreadContext.hpp"
 #include "farm/utils/FarmHelper.hpp"
@@ -11,11 +11,10 @@
 
 namespace farm {
 namespace rdma {
-MessageHandler::MessageHandler(rdma::CM<InitMessage>& cm, FaRM& db, NodeID nodeId)
+MessageHandler::MessageHandler(rdma::CM<InitMessage>& cm, Storage& db, NodeID nodeId)
     : cm(cm), db(db), nodeId(nodeId), mbPartitions(FLAGS_messageHandlerThreads) {
    // partition mailboxes
-   // size_t n = (FLAGS_worker) * (FLAGS_nodes - 1);
-   size_t n = (FLAGS_worker) * (FLAGS_nodes);
+   size_t n = (FLAGS_worker) * (FLAGS_compute_nodes);
    if (n > 0) {
       ensure(FLAGS_messageHandlerThreads <= n);  // avoid over subscribing message handler threads
       const uint64_t blockSize = n / FLAGS_messageHandlerThreads;
@@ -41,8 +40,7 @@ MessageHandler::MessageHandler(rdma::CM<InitMessage>& cm, FaRM& db, NodeID nodeI
 void MessageHandler::init() {
    InitMessage* initServer = (InitMessage*)cm.getGlobalBuffer().allocate(sizeof(InitMessage));
    // -------------------------------------------------------------------------------------
-   // size_t numConnections = (FLAGS_worker) * (FLAGS_nodes - 1);
-   size_t numConnections = (FLAGS_worker) * (FLAGS_nodes);
+   size_t numConnections = (FLAGS_worker) * (FLAGS_compute_nodes);
    connectedClients = numConnections;
    while (cm.getNumberIncomingConnections() != (numConnections))
       ;  // block until client is connected
@@ -83,6 +81,7 @@ void MessageHandler::init() {
       ConnectionContext cctx;
       cctx.request = (Message*)cm.getGlobalBuffer().allocate(rdma::LARGEST_MESSAGE, CACHE_LINE);
       cctx.response = (Message*)cm.getGlobalBuffer().allocate(rdma::LARGEST_MESSAGE, CACHE_LINE);
+      cctx.scan_buffer = (KVPair*)cm.getGlobalBuffer().allocate(sizeof(KVPair) * MAX_SCAN_RESULT, CACHE_LINE);
       cctx.rctx = rContext;
       // -------------------------------------------------------------------------------------
       // find correct mailbox in partitions
@@ -100,23 +99,24 @@ void MessageHandler::init() {
       initServer->barrierAddr = (uintptr_t)db.barrier;
       initServer->nodeId = nodeId;
       initServer->threadId = 1000;
-      initServer->num_tables = db.catalog.size();
-      ensure(initServer->num_tables < MAX_TABLES);
-      for (auto& it : db.catalog) {
-         // Do stuff
-         initServer->tables[it.second->table_id].offset = (uintptr_t)it.second->local_rows;
-         initServer->tables[it.second->table_id].begin = (uintptr_t)it.second->t_begin;
-         initServer->tables[it.second->table_id].end = (uintptr_t)it.second->t_end;
-      }
+      // initServer->num_tables = db.catalog.size();
+      // ensure(initServer->num_tables < MAX_TABLES);
+      // for (auto& it : db.catalog) {
+      //    // Do stuff
+      //    initServer->tables[it.second->table_id].offset = (uintptr_t)it.second->local_rows;
+      //    initServer->tables[it.second->table_id].begin = (uintptr_t)it.second->t_begin;
+      //    initServer->tables[it.second->table_id].end = (uintptr_t)it.second->t_end;
+      // }
       // -------------------------------------------------------------------------------------
       cm.exchangeInitialMesssage(*(cctx.rctx), initServer);
       // -------------------------------------------------------------------------------------
       // finish initialization of cctx
       cctx.plOffset = (reinterpret_cast<InitMessage*>((cctx.rctx->applicationData)))->plOffset;
       cctx.bmId = (reinterpret_cast<InitMessage*>((cctx.rctx->applicationData)))->nodeId;
+      cctx.result_buffer = (reinterpret_cast<InitMessage*>((cctx.rctx->applicationData)))->scanResultOffset;
       // -------------------------------------------------------------------------------------
-      cctx.remoteMbOffsets.resize(FLAGS_nodes);
-      cctx.remotePlOffsets.resize(FLAGS_nodes);
+      cctx.remoteMbOffsets.resize(FLAGS_compute_nodes);
+      cctx.remotePlOffsets.resize(FLAGS_compute_nodes);
       // -------------------------------------------------------------------------------------
       cctxs.push_back(cctx);
       // -------------------------------------------------------------------------------------
@@ -150,6 +150,8 @@ void MessageHandler::startThread() {
             while (!finishedInit)
                ;  // block until initialized
          }
+         
+         auto& tree = db.getTree();
          MailboxPartition& mbPartition = mbPartitions[t_i];
          uint8_t* mailboxes = mbPartition.mailboxes;
          const uint64_t beginId = mbPartition.beginId;
@@ -175,30 +177,56 @@ void MessageHandler::startThread() {
                      connectedClients--;
                      break;
                   }
-                  case MESSAGE_TYPE::RemoteWrite:{
-                     auto& request = *reinterpret_cast<rdma::RemoteWriteRequest*>(ctx.request);
-                     auto& response = *MessageFabric::createMessage<rdma::RemoteWriteResponse>(ctx.response);
+                  case MESSAGE_TYPE::Insert:{
+                     std::cout << "Insert message received " << "\n";
+                     auto& request = *reinterpret_cast<rdma::InsertRequest*>(ctx.request);
+                     auto& response = *MessageFabric::createMessage<rdma::InsertResponse>(ctx.response);
                      response.rc = rdma::RESULT::ABORTED;
-                     // install new version if possible
-                     // check version first
-                     // hack as we know that ycsb_t spans 3 farm cachelines 
-                     utils::FaRMTuple<3>* target = reinterpret_cast<utils::FaRMTuple<3>*>(request.addr);
-                     utils::FaRMTuple<3>* new_value = reinterpret_cast<utils::FaRMTuple<3>*>(request.buffer);
-                     if(target->latch()){
-                        if(new_value->compareVersions(*target)){
-                           *target = *new_value;
-                           response.rc = rdma::RESULT::COMMITTED;
-                        }
-                        target->unlatch();
-                     }
-                     response.addr = request.addr;
-                     response.nodeId = nodeId;
+                     tree.insert(request.key, request.value);
+                     response.rc = rdma::RESULT::COMMITTED;
                      writeMsg(clientId, response);
                      break;
                   }
+                  case MESSAGE_TYPE::Lookup:{
+                     std::cout << "Lookup message received " << "\n";
+                     auto& request = *reinterpret_cast<rdma::LookupRequest*>(ctx.request);
+                     auto& response = *MessageFabric::createMessage<rdma::LookupResponse>(ctx.response);
+                     response.rc = rdma::RESULT::ABORTED;
+                     Value result;
+                     if(tree.lookup(request.key, result))
+                        response.rc = rdma::RESULT::COMMITTED;
+                     response.value = result;
+                     writeMsg(clientId, response);
+                     break;
+                  }
+                  case MESSAGE_TYPE::Scan:{
+                     std::cout << "Scan message received " << "\n";
+                     auto& request = *reinterpret_cast<rdma::ScanRequest*>(ctx.request);
+                     auto& response = *MessageFabric::createMessage<rdma::ScanResponse>(ctx.response);
+                     response.rc = rdma::RESULT::ABORTED;
+                     uint64_t length {0};
+
+                     tree.scan<twosided::BTree<Key,Value>::ASC_SCAN>(request.from, [&](Key key, Value value){
+                        length++;
+                        // copy value to buffer
+                        if(key <= request.to){
+                           ensure(length < MAX_SCAN_RESULT);
+                           ctx.scan_buffer[length].key = key;
+                           ctx.scan_buffer[length].value = value;
+                           return true;
+                        }
+                        return false;
+                     });
+                     response.rc = rdma::RESULT::COMMITTED;
+                     response.length = length;
+                     rdma::postWrite(ctx.scan_buffer, *(cctxs[clientId].rctx), rdma::completion::unsignaled, cctxs[clientId].result_buffer, sizeof(KVPair) * length);
+                     writeMsg(clientId, response);
+                     break;
+                  }                     
                   default:
                      throw std::runtime_error("Unexpected Message in MB " + std::to_string(mailboxIdx) + " type " +
                                               std::to_string((size_t)ctx.request->type));
+
                }
             }
             mailboxIdx = ++startPosition;

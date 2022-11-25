@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 namespace farm {
-struct FaRM;
+struct Storage;
 namespace rdma {
 // -------------------------------------------------------------------------------------
 struct MessageHandler {
@@ -26,12 +26,15 @@ struct MessageHandler {
    // -------------------------------------------------------------------------------------
    struct alignas(CACHE_LINE) ConnectionContext {
       uintptr_t plOffset {0};       // does not have mailbox just payload with flag
+      uintptr_t result_buffer {0};
+      KVPair* scan_buffer {nullptr};
       rdma::Message* request {nullptr};   // rdma pointer
       rdma::Message* response {nullptr};  // in current protocol only one message can be outstanding per client
       rdma::RdmaContext* rctx {nullptr};
       uint64_t wqe {0};  // wqe currently outstanding
       NodeID bmId {0};   // id to which incoming client connection belongs
       uint64_t retries = 0;
+
       // remote mailboxes for each remote MH in order to allow MH to delegate requests
       std::vector<uintptr_t> remoteMbOffsets;
       std::vector<uintptr_t> remotePlOffsets;
@@ -47,7 +50,7 @@ struct MessageHandler {
       uint64_t beginId;
    };
    // -------------------------------------------------------------------------------------
-   MessageHandler(rdma::CM<InitMessage>& cm, FaRM& db, NodeID nodeId);
+   MessageHandler(rdma::CM<InitMessage>& cm, Storage& db, NodeID nodeId);
    ~MessageHandler();
    // -------------------------------------------------------------------------------------
    void startThread();
@@ -57,7 +60,7 @@ struct MessageHandler {
    std::atomic<bool> threadsRunning = true;
    std::atomic<size_t> threadCount = 0;
    rdma::CM<InitMessage>& cm;
-   FaRM& db;
+   Storage& db;
    // -------------------------------------------------------------------------------------
    NodeID nodeId;
    std::vector<ConnectionContext> cctxs;

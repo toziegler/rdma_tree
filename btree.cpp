@@ -357,7 +357,7 @@ struct Traversal : public InnerTraversalAbstract{
 int main(int argc, char* argv[]) {
    using Leaf = BTreeLeaf<int, int>;
    using Inner = BTreeInner<int, BTreeNodeHeader*>;
-
+   
    gflags::SetUsageMessage("Catalog Test");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 

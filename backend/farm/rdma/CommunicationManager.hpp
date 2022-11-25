@@ -38,7 +38,9 @@ namespace farm
 namespace rdma
 {
 
-static constexpr uint64_t INLINE_SIZE = 64; 
+// smaller inline size reduces WQE, max with our cards would be 220
+static constexpr uint64_t INLINE_SIZE = 64; // LARGEST MESSAGE
+
 
 enum completion : bool {
    signaled = true,
@@ -176,7 +178,7 @@ inline void postSend(T* memAddr, RdmaContext& context, completion wc)
    postSend(memAddr, sizeof(T), context.id->qp, context.mr, wc);
 }
 
-inline void postFetchAdd(uint64_t to_add, void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset)
+inline void postFetchAdd(uint64_t to_add, void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset, bool needFence)
 {
    struct ibv_send_wr sq_wr;
    struct ibv_sge send_sgl;
@@ -186,6 +188,8 @@ inline void postFetchAdd(uint64_t to_add, void* memAddr, size_t size, ibv_qp* qp
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
+   if(needFence)
+      sq_wr.send_flags |= IBV_SEND_FENCE;
    sq_wr.wr.atomic.remote_addr    = remoteOffset;
    sq_wr.wr.atomic.rkey           = rkey;
    sq_wr.wr.atomic.compare_add    = to_add; /* value to be added to the remote address content */
@@ -198,14 +202,14 @@ inline void postFetchAdd(uint64_t to_add, void* memAddr, size_t size, ibv_qp* qp
       throw std::runtime_error("Failed to post send request");
 }
 
-inline void postFetchAdd(uint64_t to_add ,uint64_t* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset)
+inline void postFetchAdd(uint64_t to_add ,uint64_t* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset, bool needFence = false)
 {
-   postFetchAdd(to_add ,memAddr, sizeof(uint64_t), qp, mr, wc, rkey, remoteOffset);
+   postFetchAdd(to_add ,memAddr, sizeof(uint64_t), qp, mr, wc, rkey, remoteOffset,needFence);
 }
 
-inline void postFetchAdd(uint64_t to_add ,uint64_t* memAddr, RdmaContext& context, completion wc, size_t remoteOffset)
+inline void postFetchAdd(uint64_t to_add ,uint64_t* memAddr, RdmaContext& context, completion wc, size_t remoteOffset, bool needFence = false)
 {
-   postFetchAdd(to_add, memAddr, sizeof(uint64_t), context.id->qp, context.mr, wc, context.rkey, remoteOffset);
+   postFetchAdd(to_add, memAddr, sizeof(uint64_t), context.id->qp, context.mr, wc, context.rkey, remoteOffset, needFence);
 }
 
 
@@ -280,7 +284,15 @@ inline void postWrite(T* memAddr, RdmaContext& context, completion wc, size_t re
    postWrite(memAddr, sizeof(T), context.id->qp, context.mr, wc, context.rkey, remoteOffset);
 }
 
-inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset, size_t wcId  = 0)
+
+template <typename T>
+inline void postWrite(T* memAddr, RdmaContext& context, completion wc, size_t remoteOffset, size_t bytes)
+{
+   static_assert(!std::is_void<T>::value, "post write cannot be called with void");
+   postWrite(memAddr, bytes, context.id->qp, context.mr, wc, context.rkey, remoteOffset);
+}
+
+inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset, size_t wcId  = 0, bool needFence = false)
 {
    struct ibv_send_wr sq_wr;
    struct ibv_sge send_sgl;
@@ -290,6 +302,8 @@ inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, complet
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_RDMA_READ;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
+   if(needFence)
+      sq_wr.send_flags |= IBV_SEND_FENCE;
    sq_wr.sg_list = &send_sgl;
    sq_wr.num_sge = 1;
    sq_wr.wr.rdma.rkey = rkey;
@@ -301,11 +315,40 @@ inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, complet
       throw std::runtime_error("Failed to post send request" + std::to_string(ret) + " " + std::to_string(errno));
 }
 
+
+template <typename T>
+inline void postReadFenced(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset, size_t wcId  = 0 )
+{
+   static_assert(!std::is_void<T>::value, "post write cannot be called with void");
+   postRead(memAddr, sizeof(T), qp, mr, wc, rkey, remoteOffset, wcId, true);
+}
+
+template <typename T>
+inline void postReadFenced(T* memAddr, RdmaContext& context, completion wc, size_t remoteOffset, size_t bytes, size_t wcId)
+{
+   static_assert(!std::is_void<T>::value, "post write cannot be called with void");
+   postRead(memAddr, bytes, context.id->qp, context.mr, wc, context.rkey, remoteOffset, wcId, true);
+}
+
+template <typename T>
+inline void postReadFenced(T* memAddr, RdmaContext& context, completion wc, size_t remoteOffset, size_t wcId = 0)
+{
+   static_assert(!std::is_void<T>::value, "post write cannot be called with void");
+   postRead(memAddr, sizeof(T), context.id->qp, context.mr, wc, context.rkey, remoteOffset, wcId,true);
+}
+
 template <typename T>
 inline void postRead(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset, size_t wcId  = 0 )
 {
    static_assert(!std::is_void<T>::value, "post write cannot be called with void");
    postRead(memAddr, sizeof(T), qp, mr, wc, rkey, remoteOffset, wcId);
+}
+
+template <typename T>
+inline void postRead(T* memAddr, RdmaContext& context, completion wc, size_t remoteOffset, size_t bytes, size_t wcId)
+{
+   static_assert(!std::is_void<T>::value, "post write cannot be called with void");
+   postRead(memAddr, bytes, context.id->qp, context.mr, wc, context.rkey, remoteOffset, wcId);
 }
 
 template <typename T>
@@ -339,7 +382,7 @@ class CM
 {
   public:
    //! Default constructor
-   CM() : port(htons(FLAGS_port)), mbr(FLAGS_dramGB * FLAGS_rdmaMemoryFactor * 1024 * 1024 * 1024), running(true), handler(&CM::handle, this)
+   CM() : port(htons(FLAGS_port)), mbr(FLAGS_dramGB * FLAGS_rdmaMemoryFactor * 1024 * 1024 * 1024), running(FLAGS_storage_node), handler(&CM::handle, this)
    {
       // create thread
       incomingChannel = rdma_create_event_channel();
@@ -347,7 +390,7 @@ class CM
          throw std::runtime_error("Could not create rdma_event_channels");
 
       int ret = rdma_create_id(incomingChannel, &incomingCmId, nullptr, RDMA_PS_TCP);
-      if (ret == -1)
+      if (ret != 0)
          throw std::runtime_error("Could not create id");
 
       // create rdma ressources
@@ -438,6 +481,7 @@ class CM
          context = connections[(uintptr_t)currentId];
          ensure(context != nullptr);
 
+         DEBUG_LOG("Handle connection");
          switch (event->event) {
             case RDMA_CM_EVENT_ADDR_RESOLVED:
                DEBUG_LOG("RDMA_CM_EVENT_ADDR_RESOLVED");
@@ -644,7 +688,7 @@ class CM
    // handler section
    std::atomic<bool> running{false};
    std::thread handler;
-   struct rdma_event_channel* incomingChannel;
+   struct rdma_event_channel* incomingChannel = nullptr;
    struct rdma_cm_id* incomingCmId;
    std::mutex incomingMut;
    std::atomic<bool> initialized{false};
@@ -664,12 +708,12 @@ class CM
          ((struct sockaddr_in6*)&sin)->sin6_port = port;
 
       auto ret = rdma_resolve_addr(outgoingCmId, nullptr, (struct sockaddr*)&sin, 2000);
-      if (ret)
-         throw;
+      if (ret == -1)
+         throw std::runtime_error("could not resolve addr");
       struct rdma_cm_event* event;
       ret = rdma_get_cm_event(outgoingChannel, &event);
-      if (ret)
-         throw;
+      if (ret == -1)
+         throw std::runtime_error("could not get CM event");;
       if (event->event != RDMA_CM_EVENT_ADDR_RESOLVED)
          throw;
       rdma_ack_cm_event(event);
@@ -692,17 +736,18 @@ class CM
       int ret;
       if (sin.ss_family == AF_INET)
          ((struct sockaddr_in*)&sin)->sin_port = port;
-      else
+      else if (sin.ss_family == PF_INET6)
          ((struct sockaddr_in6*)&sin)->sin6_port = port;
+      else throw std::runtime_error("bind handler failed");
 
       ret = rdma_bind_addr(incomingCmId, (struct sockaddr*)&sin);
-      if (ret) {
+      if (ret == -1) {
          throw std::runtime_error("Could not bind to rdma device");
       }
       DEBUG_LOG("rdma_bind_addr successful");
       DEBUG_LOG("rdma_listen");
       ret = rdma_listen(incomingCmId, 3);
-      if (ret) {
+      if (ret == -1) {
          throw std::runtime_error("Could not listen");
       }
    }
@@ -805,7 +850,7 @@ class CM
    }
    void getAddr(std::string ip, struct sockaddr* addr)
    {
-      DEBUG_LOG("get_addr");
+      DEBUG_LOG("get_addr " << ip);
       struct addrinfo* res;
       auto ret = getaddrinfo(ip.c_str(), NULL, NULL, &res);
       if (ret) {
@@ -822,4 +867,4 @@ class CM
    }
 };
 }  // namespace rdma
-}  // namespace farm
+}  // namespace nam

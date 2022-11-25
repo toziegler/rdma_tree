@@ -11,7 +11,7 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
       cpuCounters(name),
       cm(cm),
       nodeId_(nodeId),
-      cctxs(FLAGS_nodes),
+      cctxs(FLAGS_storage_nodes),
       threadContext(std::make_unique<ThreadContext>()) {
    ThreadContext::tlsPtr = threadContext.get();
    tl_rdma_buffer = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER,64); 
@@ -19,13 +19,14 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
    // Connection to MessageHandler
    // -------------------------------------------------------------------------------------
    // First initiate connection
-   for (uint64_t n_i = 0; n_i < FLAGS_nodes; n_i++) {
+   for (uint64_t n_i = 0; n_i < FLAGS_storage_nodes; n_i++) {
       // -------------------------------------------------------------------------------------
-      auto& ip = NODES[FLAGS_nodes][n_i];
+      auto& ip = NODES[FLAGS_storage_nodes][n_i];
       cctxs[n_i].rctx = &(cm.initiateConnection(ip, rdma::Type::WORKER, workerId, nodeId));
       // -------------------------------------------------------------------------------------
       cctxs[n_i].incoming = (rdma::Message*)cm.getGlobalBuffer().allocate(rdma::LARGEST_MESSAGE, CACHE_LINE);
       cctxs[n_i].outgoing = (rdma::Message*)cm.getGlobalBuffer().allocate(rdma::LARGEST_MESSAGE, CACHE_LINE);
+      cctxs[n_i].result_buffer = (KVPair*)cm.getGlobalBuffer().allocate(sizeof(KVPair) * MAX_SCAN_RESULT, CACHE_LINE);
       cctxs[n_i].wqe = 0;
       // -------------------------------------------------------------------------------------
    }
@@ -33,13 +34,14 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
    // -------------------------------------------------------------------------------------
    // Second finish connection
    rdma::InitMessage* init = (rdma::InitMessage*)cm.getGlobalBuffer().allocate(sizeof(rdma::InitMessage)); 
-   for (uint64_t n_i = 0; n_i < FLAGS_nodes; n_i++) {
+   for (uint64_t n_i = 0; n_i < FLAGS_storage_nodes; n_i++) {
       // -------------------------------------------------------------------------------------
       // fill init messages
       init->mbOffset = 0;  // No MB offset
       init->plOffset = (uintptr_t)cctxs[n_i].incoming;
       init->nodeId = nodeId;
       init->threadId = workerId + (nodeId*FLAGS_worker);
+      init->scanResultOffset = (uintptr_t)cctxs[n_i].result_buffer;
       // -------------------------------------------------------------------------------------
       cm.exchangeInitialMesssage(*(cctxs[n_i].rctx), init);
       // -------------------------------------------------------------------------------------
@@ -56,11 +58,13 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
          barrier = msg.barrierAddr;
    }
 
+   std::cout << "Connection established" << "\n";
+
 }
 
 // -------------------------------------------------------------------------------------
 Worker::~Worker() {
-   for (uint64_t n_i = 0; n_i < FLAGS_nodes; n_i++) {
+   for (uint64_t n_i = 0; n_i < FLAGS_storage_nodes; n_i++) {
       // -------------------------------------------------------------------------------------
       auto& request = *MessageFabric::createMessage<FinishRequest>(cctxs[n_i].outgoing);
       assert(request.type == MESSAGE_TYPE::Finish);
