@@ -1,13 +1,14 @@
 #pragma once
 #include <span>
+
 #include "Defs.hpp"
 #include "ThreadContext.hpp"
 #include "farm/profiling/counters/CPUCounters.hpp"
 #include "farm/profiling/counters/WorkerCounters.hpp"
 #include "farm/rdma/CommunicationManager.hpp"
+#include "farm/rdma/messages/Messages.hpp"
 #include "farm/utils/FarmHelper.hpp"
 #include "farm/utils/RandomGenerator.hpp"
-#include "farm/rdma/messages/Messages.hpp"
 // -------------------------------------------------------------------------------------
 namespace farm {
 namespace threads {
@@ -74,48 +75,40 @@ struct Worker {
    // -------------------------------------------------------------------------------------
    inline void backoff() {
       auto p_ops = farm::utils::RandomGenerator::getRandU64(0, 128);
-      for (uint64_t i = 0; i < p_ops; i++)
-         _mm_pause();
+      for (uint64_t i = 0; i < p_ops; i++) _mm_pause();
    }
 
-   bool insert(NodeID nodeId, Key key, Value value){
+   bool insert(NodeID nodeId, Key key, Value value) {
       auto& request = *MessageFabric::createMessage<InsertRequest>(cctxs[nodeId].outgoing);
       request.nodeId = nodeId_;
       request.key = key;
       request.value = value;
       auto& response = writeMsgSync<rdma::InsertResponse>(nodeId, request);
-      if(response.rc == rdma::RESULT::ABORTED){
-         return false;
-      }
+      if (response.rc == rdma::RESULT::ABORTED) { return false; }
       return true;
    }
 
-   bool lookup(NodeID nodeId, Key key, Value& returnValue){
+   bool lookup(NodeID nodeId, Key key, Value& returnValue) {
       auto& request = *MessageFabric::createMessage<LookupRequest>(cctxs[nodeId].outgoing);
       request.nodeId = nodeId_;
       request.key = key;
       auto& response = writeMsgSync<rdma::LookupResponse>(nodeId, request);
-      if(response.rc == rdma::RESULT::ABORTED){
-         return false;
-      }
+      if (response.rc == rdma::RESULT::ABORTED) { return false; }
       returnValue = response.value;
       return true;
    }
 
-   std::span<KVPair> scan(NodeID nodeId, Key from, Key to){
+   std::span<KVPair> scan(NodeID nodeId, Key from, Key to) {
       auto& request = *MessageFabric::createMessage<ScanRequest>(cctxs[nodeId].outgoing);
       request.nodeId = nodeId_;
       request.from = from;
       request.to = to;
       auto& response = writeMsgSync<rdma::ScanResponse>(nodeId, request);
-      if(response.rc == rdma::RESULT::ABORTED){
-         return std::span<KVPair>();
-      }
-      std::cout << "Length " << response.length << "\n";
-      return std::span<KVPair>(cctxs[nodeId].result_buffer, response.length);      
+      if (response.rc == rdma::RESULT::ABORTED) { return std::span<KVPair>(); }
+      return std::span<KVPair>(cctxs[nodeId].result_buffer, response.length);
    }
-   
-   // -------------------------------------------------------------------------------------  
+
+   // -------------------------------------------------------------------------------------
    // template <class Record>
    // Record latchfreeReadRecord(NodeID nodeId, uintptr_t addr) {
    //    using namespace farm::utils;
@@ -152,7 +145,7 @@ struct Worker {
    //    if(!f->latch()) throw std::logic_error("thread local buffer should be latchable");
    //    // -------------------------------------------------------------------------------------
    //    // copy new record to tl buffer
-   //    utils::toFaRM(record,f); 
+   //    utils::toFaRM(record,f);
    //    // -------------------------------------------------------------------------------------
    //    if (nodeId == nodeId_) {
    //      TypedFaRMTuple<Record>* target = reinterpret_cast<TypedFaRMTuple<Record>*>(addr);
@@ -179,7 +172,6 @@ struct Worker {
    //    return true;
    // }
 
-
    void rdma_barrier_wait(uint64_t stage) {
       {
          auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer);
@@ -204,43 +196,34 @@ struct Worker {
             if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
          }
       }
-      std::cout << " barrier " << *barrier_value << " == "<<  expected << std::endl;
+      std::cout << " barrier " << *barrier_value << " == " << expected << std::endl;
    }
-   
+
    template <typename MSG>
-   void writeMsg(NodeID nodeId, MSG& msg)
-      {
-         rdma::completion  signal =  rdma::completion::signaled;
-         uint8_t flag = 1;
-         // -------------------------------------------------------------------------------------
-         rdma::postWrite(&msg, *(cctxs[nodeId].rctx), rdma::completion::unsignaled,cctxs[nodeId].plOffset);
-         rdma::postWrite(&flag, *(cctxs[nodeId].rctx), signal ,cctxs[nodeId].mbOffset);
-         // -------------------------------------------------------------------------------------
-            int comp{0};
-            ibv_wc wcReturn;
-            while (comp == 0) {
-               comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
-            }
-      }
-   
+   void writeMsg(NodeID nodeId, MSG& msg) {
+      rdma::completion signal = rdma::completion::signaled;
+      uint8_t flag = 1;
+      // -------------------------------------------------------------------------------------
+      rdma::postWrite(&msg, *(cctxs[nodeId].rctx), rdma::completion::unsignaled, cctxs[nodeId].plOffset);
+      rdma::postWrite(&flag, *(cctxs[nodeId].rctx), signal, cctxs[nodeId].mbOffset);
+      // -------------------------------------------------------------------------------------
+      int comp{0};
+      ibv_wc wcReturn;
+      while (comp == 0) { comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn); }
+   }
+
    template <typename RESPONSE, typename MSG>
-   RESPONSE& writeMsgSync(NodeID nodeId, MSG& msg)
-      {
-         // -------------------------------------------------------------------------------------
-         auto& response = *static_cast<RESPONSE*>(cctxs[nodeId].incoming);
-         response.receiveFlag = 0;
-         volatile uint8_t& received = response.receiveFlag;
-         // -------------------------------------------------------------------------------------
-         writeMsg(nodeId, msg);
-         // -------------------------------------------------------------------------------------
-         while (received == 0) {
-            _mm_pause();
-         }
-         return response;
-      }
-
-
-   
+   RESPONSE& writeMsgSync(NodeID nodeId, MSG& msg) {
+      // -------------------------------------------------------------------------------------
+      auto& response = *static_cast<RESPONSE*>(cctxs[nodeId].incoming);
+      response.receiveFlag = 0;
+      volatile uint8_t& received = response.receiveFlag;
+      // -------------------------------------------------------------------------------------
+      writeMsg(nodeId, msg);
+      // -------------------------------------------------------------------------------------
+      while (received == 0) { _mm_pause(); }
+      return response;
+   }
 };
 // -------------------------------------------------------------------------------------
 }  // namespace threads

@@ -10,8 +10,7 @@ namespace threads
 {
 // -------------------------------------------------------------------------------------
 
-WorkerPool::WorkerPool(rdma::CM<rdma::InitMessage>& cm, NodeID nodeId): workers(MAX_WORKER_THREADS,nullptr)
-{
+WorkerPool::WorkerPool(rdma::CM<rdma::InitMessage>& cm, NodeID nodeId) : workers(MAX_WORKER_THREADS, nullptr) {
    workersCount = FLAGS_worker;
    ensure(workersCount < MAX_WORKER_THREADS);
    workerThreads.reserve(workersCount);
@@ -28,9 +27,7 @@ WorkerPool::WorkerPool(rdma::CM<rdma::InitMessage>& cm, NodeID nodeId): workers(
          while (keepRunning) {
             std::unique_lock guard(meta.mutex);
             meta.cv.wait(guard, [&]() { return keepRunning == false || meta.jobSet; });
-            if (!keepRunning) {
-               break;
-            }
+            if (!keepRunning) { break; }
             meta.wtReady = false;
             meta.job();
             meta.wtReady = true;
@@ -40,36 +37,28 @@ WorkerPool::WorkerPool(rdma::CM<rdma::InitMessage>& cm, NodeID nodeId): workers(
          }
          runningThreads--;
       });
-   }   
-   if(FLAGS_pinThreads){
+   }
+   if (FLAGS_pinThreads) {
       for (auto& t : workerThreads) {
          threads::CoreManager::getInstance().pinThreadRoundRobin(t.native_handle());
-            // threads::CoreManager::getInstance().pinThreadToCore(t.native_handle());
+         // threads::CoreManager::getInstance().pinThreadToCore(t.native_handle());
       }
    }
 
-   
-   for (auto& t : workerThreads) {
-      t.detach();
-   }
+   for (auto& t : workerThreads) { t.detach(); }
    // -------------------------------------------------------------------------------------
    // Wait until all worker threads are initialized
-   while (runningThreads < workersCount) {
-   }
+   while (runningThreads < workersCount) {}
 }
 // -------------------------------------------------------------------------------------
 WorkerPool::~WorkerPool(){
    keepRunning = false;
-   
-   for (uint64_t t_i = 0; t_i < workersCount; t_i++) {
-      workerThreadsMeta[t_i].cv.notify_one();
-   }
-   while (runningThreads) {
-   }
 
-   for(auto& w : workers)
-      if(w) delete w;
+   for (uint64_t t_i = 0; t_i < workersCount; t_i++) { workerThreadsMeta[t_i].cv.notify_one(); }
+   while (runningThreads) {}
 
+   for (auto& w : workers)
+      if (w) delete w;
 }
 // -------------------------------------------------------------------------------------
 

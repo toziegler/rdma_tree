@@ -41,4 +41,4 @@ DECLARE_uint64(messageHandlerMaxRetries);
 DECLARE_uint32(sockets);
 DECLARE_uint32(socket);
 DECLARE_bool(pinThreads);
-DECLARE_bool(cpuCounters); 
+DECLARE_bool(cpuCounters);

@@ -16,7 +16,7 @@ namespace threads
 // -------------------------------------------------------------------------------------
 class WorkerPool
 {
-   static constexpr uint64_t MAX_WORKER_THREADS = 70;
+   static constexpr uint64_t MAX_WORKER_THREADS = 128;
 
    std::atomic<uint64_t> runningThreads = 0;
    std::atomic<bool> keepRunning = true;

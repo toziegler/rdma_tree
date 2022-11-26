@@ -48,6 +48,18 @@ enum LOG_LEVEL{
 #define ensure(e) do {} while(0);
 #endif
 
+
+static const bool __check_buildtype = []() {
+#if defined(__OPTIMIZE__)
+   std::cout << "Optimized build\n";
+#elif defined(__OPTIMIZE_SIZE__)
+   std::cout << "Optimized build for size\n";
+#else
+   std::cout << "Unoptimized build\n";
+#endif
+   return true;
+}();
+
 template <typename T>
 inline void DO_NOT_OPTIMIZE(T const& value)
 {

@@ -178,7 +178,6 @@ void MessageHandler::startThread() {
                      break;
                   }
                   case MESSAGE_TYPE::Insert:{
-                     std::cout << "Insert message received " << "\n";
                      auto& request = *reinterpret_cast<rdma::InsertRequest*>(ctx.request);
                      auto& response = *MessageFabric::createMessage<rdma::InsertResponse>(ctx.response);
                      response.rc = rdma::RESULT::ABORTED;
@@ -188,7 +187,6 @@ void MessageHandler::startThread() {
                      break;
                   }
                   case MESSAGE_TYPE::Lookup:{
-                     std::cout << "Lookup message received " << "\n";
                      auto& request = *reinterpret_cast<rdma::LookupRequest*>(ctx.request);
                      auto& response = *MessageFabric::createMessage<rdma::LookupResponse>(ctx.response);
                      response.rc = rdma::RESULT::ABORTED;
@@ -200,19 +198,17 @@ void MessageHandler::startThread() {
                      break;
                   }
                   case MESSAGE_TYPE::Scan:{
-                     std::cout << "Scan message received " << "\n";
                      auto& request = *reinterpret_cast<rdma::ScanRequest*>(ctx.request);
                      auto& response = *MessageFabric::createMessage<rdma::ScanResponse>(ctx.response);
                      response.rc = rdma::RESULT::ABORTED;
                      uint64_t length {0};
 
                      tree.scan<twosided::BTree<Key,Value>::ASC_SCAN>(request.from, [&](Key key, Value value){
-                        length++;
                         // copy value to buffer
                         if(key <= request.to){
                            ensure(length < MAX_SCAN_RESULT);
                            ctx.scan_buffer[length].key = key;
-                           ctx.scan_buffer[length].value = value;
+                           ctx.scan_buffer[length++].value = value;
                            return true;
                         }
                         return false;

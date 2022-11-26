@@ -171,45 +171,6 @@ struct ProfilingThread {
             for (uint64_t c_i = 0; c_i < WorkerCounters::COUNT; c_i++) {
                if (c_i == WorkerCounters::latency && workerCounterAgg[WorkerCounters::tx_p] > 0) {
                   csv_file << workerCounterAgg[c_i] / (double)workerCounterAgg[WorkerCounters::tx_p] << " , ";
-
-               }else if (c_i == WorkerCounters::pp_latency_p1_incoming_requests &&
-                           workerCounterAgg[WorkerCounters::pp_rounds] > 0)
-                  {
-                     csv_file << workerCounterAgg[c_i] 
-                              << " , ";
-                  }
-
-                  else if (c_i == WorkerCounters::pp_latency_p2_cooling &&
-                           workerCounterAgg[WorkerCounters::pp_rounds] > 0)
-                  {
-                     csv_file << workerCounterAgg[c_i] 
-                              << " , ";
-                  }
-                  else if (c_i == WorkerCounters::pp_latency_p3_select &&
-                           workerCounterAgg[WorkerCounters::pp_rounds] > 0)
-                  {
-                     csv_file << workerCounterAgg[c_i] 
-                              << " , ";
-                  }
-                  else if (c_i == WorkerCounters::pp_latency_p4_send_requests &&
-                           workerCounterAgg[WorkerCounters::pp_rounds] > 0)
-                  {
-                     csv_file << workerCounterAgg[c_i] 
-                              << " , ";
-                  }
-                  else if (c_i == WorkerCounters::pp_latency_p5_incoming_responses &&
-                           workerCounterAgg[WorkerCounters::pp_rounds] > 0)
-                  {
-                     csv_file << workerCounterAgg[c_i] 
-                              << " , ";
-                  }
-                  else if (c_i == WorkerCounters::pp_latency_p6_send_responses &&
-                           workerCounterAgg[WorkerCounters::pp_rounds] > 0)
-                  {
-                     csv_file << workerCounterAgg[c_i] 
-                              << " , ";
-                  
-
                } else {
                   csv_file << workerCounterAgg[c_i] << " , ";
                }
