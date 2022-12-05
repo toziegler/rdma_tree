@@ -76,6 +76,11 @@ inline void DO_NOT_OPTIMIZE(T const& value)
       assert(false);      \
    }
 
+static void TODO(std::string&& todo){
+   std::cout << todo << std::endl;
+}
+
+
 // Btree key and value 
 using Key = uint64_t;
 using Value = uint64_t;
@@ -117,42 +122,35 @@ using NodeID = uint64_t;
 // -------------------------------------------------------------------------------------
 constexpr uint64_t PAGEID_BITS_NODEID = 8;
 constexpr uint64_t NODEID_MASK = (~uint64_t(0) >> 8);
-struct PID {
+struct RemotePtr {
    // -------------------------------------------------------------------------------------
-   uint64_t id = 0;
-   PID() = default;
-   explicit PID(uint64_t pid_id):id(pid_id){};
-   constexpr PID(uint64_t owner, uint64_t id) : id(((owner << ((sizeof(uint64_t) * 8) - PAGEID_BITS_NODEID))) | id){};
-   NodeID getOwner() { return NodeID(id >> ((sizeof(uint64_t) * 8 - PAGEID_BITS_NODEID))); }
-   uint64_t plainPID() { return (id & NODEID_MASK) ; }
-   operator uint64_t(){ return id; }
-   inline PID& operator=(const uint64_t& other){
-      id = other;
+   uint64_t offset = 0;
+   RemotePtr() = default;
+   explicit RemotePtr(uint64_t offset):offset(offset){};
+   constexpr RemotePtr(uint64_t owner, uint64_t offset) : offset(((owner << ((sizeof(uint64_t) * 8) - PAGEID_BITS_NODEID))) | offset){};
+   NodeID getOwner() { return NodeID(offset >> ((sizeof(uint64_t) * 8 - PAGEID_BITS_NODEID))); }
+   uint64_t plainOffset() { return (offset & NODEID_MASK) ; }
+   operator uint64_t(){ return offset; }
+   inline RemotePtr& operator=(const uint64_t& other){
+      offset = other;
       return *this;
    }
-   friend bool operator==(const PID& lhs, const PID& rhs)  { return (lhs.id == rhs.id); }
-   friend bool operator!=(const PID& lhs, const PID& rhs)  { return (lhs.id != rhs.id); }
-   friend bool operator>=(const PID& lhs, const PID& rhs)  { return (lhs.id >= rhs.id); }
-   friend bool operator<=(const PID& lhs, const PID& rhs)  { return (lhs.id <= rhs.id); }
-   friend bool operator<(const PID& lhs, const PID& rhs)  { return (lhs.id < rhs.id); }
-   friend bool operator>(const PID& lhs, const PID& rhs)  { return (lhs.id > rhs.id); }
+   friend bool operator==(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset == rhs.offset); }
+   friend bool operator!=(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset != rhs.offset); }
+   friend bool operator>=(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset >= rhs.offset); }
+   friend bool operator<=(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset <= rhs.offset); }
+   friend bool operator<(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset < rhs.offset); }
+   friend bool operator>(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset > rhs.offset); }
    // -------------------------------------------------------------------------------------
 };
 
 
 constexpr NodeID EMPTY_NODEID (~uint64_t(0));
-constexpr PID EMPTY_PID ((~uint8_t(0)), (~uint64_t(0)));
+constexpr RemotePtr NULL_REMOTEPTR ((~uint8_t(0)), (~uint64_t(0)));
 constexpr uint64_t EMPTY_PVERSION ((~uint64_t(0)));
 constexpr uint64_t EMPTY_EPOCH ((~uint64_t(0)));
 static constexpr uint64_t MAX_TABLES = 10;
 static constexpr uint64_t THREAD_LOCAL_RDMA_BUFFER = 1024; // 1kb
-static constexpr uint64_t EXCLUSIVE_LOCKED = 0x1000000000000000;
-static constexpr uint64_t EXCLUSIVE_UNLOCK_TO_BE_ADDED = 0xFFFFFFFFFFFFFFFF - EXCLUSIVE_LOCKED + 1;
-static constexpr uint64_t UNLOCKED = 0;
-static constexpr uint64_t MASKED_SHARED_LOCKS = 0x1000000000000000;
-static constexpr uint64_t SHARED_UNLOCK_TO_BE_ADDED = 0xFFFFFFFFFFFFFFFF;
-static constexpr uint64_t INDIRECT_BUCKET = 0x8000000000000000;
-static constexpr uint64_t DIRECT_BUCKET   = 0x0000000000000000;
 
 // -------------------------------------------------------------------------------------
 // helper functions
@@ -182,5 +180,5 @@ static bool powerOfTwo(u64 n)
 // Catalog
 // -------------------------------------------------------------------------------------
 constexpr NodeID CATALOG_OWNER {0};
-constexpr PID CATALOG_PID (CATALOG_OWNER,0);
+constexpr RemotePtr CATALOG_PID (CATALOG_OWNER,0);
 

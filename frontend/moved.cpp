@@ -3,6 +3,7 @@
 #include "farm/Compute.hpp"
 #include "farm/Config.hpp"
 #include "farm/Storage.hpp"
+#include "farm/db/onesidedBtree.hpp"
 #include "farm/profiling/ProfilingThread.hpp"
 #include "farm/profiling/counters/WorkerCounters.hpp"
 #include "farm/threads/Concurrency.hpp"
@@ -107,8 +108,16 @@ struct ProfilingInfo : public farm::profiling::WorkloadInfo {
 void storage_node() {
    using namespace farm;
    Storage store;
+   profiling::EmptyWorkloadInfo wl;
+   store.startProfiler(wl);
    store.startMessageHandler();
-   sleep(5);
+   {
+      while (store.getConnectedClients() == 0)
+         ;
+      [[maybe_unused]] farm::RemoteGuard rguard(store.getConnectedClients());
+   }
+   std::cout << "Stopped Profiler" << std::endl;
+   store.stopProfiler();
 }
 
 //=== Main ===//
@@ -130,7 +139,7 @@ int main(int argc, char* argv[]) {
       if (!FLAGS_percentage_keys.empty()) {
          auto tmp_pkeys = interpretGflagString(FLAGS_percentage_keys);
          for (auto pk : tmp_pkeys) { percentage_keys.push_back(pk / 100.0); }
-      }else{
+      } else {
          percentage_keys.resize(FLAGS_storage_nodes);
          for (auto& pk : percentage_keys) { pk = 1.0 / (double)FLAGS_storage_nodes; }
       }
@@ -164,15 +173,15 @@ int main(int argc, char* argv[]) {
             auto begin = part.first + threadPartition.first;
             auto end = part.first + threadPartition.second;
             for (Key k = begin; k < end; ++k) {
+               auto p_id = get_partition(k);
                Value v = k;
-               threads::Worker::my().insert(0, k, v);
+               threads::Worker::my().insert(p_id, k, v);
                threads::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
             }
          });
       }
+
       barrier_wait();
-      // XXX: Use and test barrier
-      // XXX: Benchmark Workload
       //=== Benchmark ===//
       std::string benchmark = (FLAGS_scans) ? "scans" : "point queries";
       ProfilingInfo pf{benchmark, FLAGS_keys, FLAGS_read_ratio, skew};
@@ -198,7 +207,8 @@ int main(int argc, char* argv[]) {
                                                std::to_string(start));
                      start++;
                   }
-                  threads::Worker::my().counters.incr_by(profiling::WorkerCounters::latency, utils::getTimePoint() - begin);
+                  threads::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
+                                                         utils::getTimePoint() - begin);
                   continue;
                }
                //=== Upsert and Lookups ===//
@@ -206,15 +216,16 @@ int main(int argc, char* argv[]) {
                Key key = utils::RandomGenerator::getRandU64(0, FLAGS_keys);
                auto p_id = get_partition(key);
                if (FLAGS_read_ratio == 100 || utils::RandomGenerator::getRandU64(0, 100) < FLAGS_read_ratio) {
-                  Value rValue {0};
+                  Value rValue{0};
                   auto found = threads::Worker::my().lookup(p_id, key, rValue);
-                  if(!found) throw std::logic_error("key not found");
+                  if (!found) throw std::logic_error("key not found");
                } else {
                   Value value = utils::RandomGenerator::getRandU64Fast();
                   auto success = threads::Worker::my().insert(p_id, key, value);
-                  if(!success) throw std::logic_error("key not found");
+                  if (!success) throw std::logic_error("key not found");
                }
-               threads::Worker::my().counters.incr_by(profiling::WorkerCounters::latency, utils::getTimePoint() - begin);
+               threads::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
+                                                      utils::getTimePoint() - begin);
             }
             running_threads_counter--;
          });

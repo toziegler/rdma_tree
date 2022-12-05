@@ -65,6 +65,10 @@ class Storage
       mh = std::make_unique<rdma::MessageHandler>(*cm, *this, nodeId);
    };
 
+   std::atomic<uint64_t>& getConnectedClients(){
+      return mh->connectedClients;
+   }
+
    uint64_t* barrier;
 
    auto& getTree(){

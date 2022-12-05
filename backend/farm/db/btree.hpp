@@ -7,6 +7,9 @@
 #include <iostream>
 #include <vector>
 
+//=== Two-sided B+Tree ===//
+// This tree is used by the message handlers on the storage node
+
 namespace twosided {
 
 enum class PageType : uint8_t { BTreeInner = 1, BTreeLeaf = 2 };
@@ -382,7 +385,7 @@ struct BTree {
 
       while (node->type == PageType::BTreeInner) {
          auto inner = static_cast<BTreeInner<Key>*>(node);
-
+    
          // Split eagerly if full
          if (inner->isFull()) {
             // Lock
@@ -426,7 +429,7 @@ struct BTree {
          versionNode = node->readLockOrRestart(needRestart);
          if (needRestart) goto restart;
       }
-
+    
       auto leaf = static_cast<BTreeLeaf<Key, Value>*>(node);
 
       // Split leaf if full

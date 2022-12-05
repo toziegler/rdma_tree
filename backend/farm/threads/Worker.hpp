@@ -78,6 +78,7 @@ struct Worker {
       for (uint64_t i = 0; i < p_ops; i++) _mm_pause();
    }
 
+   //=== two-sided tree stub ===//
    bool insert(NodeID nodeId, Key key, Value value) {
       auto& request = *MessageFabric::createMessage<InsertRequest>(cctxs[nodeId].outgoing);
       request.nodeId = nodeId_;
@@ -107,70 +108,42 @@ struct Worker {
       if (response.rc == rdma::RESULT::ABORTED) { return std::span<KVPair>(); }
       return std::span<KVPair>(cctxs[nodeId].result_buffer, response.length);
    }
+   
 
-   // -------------------------------------------------------------------------------------
-   // template <class Record>
-   // Record latchfreeReadRecord(NodeID nodeId, uintptr_t addr) {
-   //    using namespace farm::utils;
-   //    TypedFaRMTuple<Record>* f = reinterpret_cast<TypedFaRMTuple<Record>*>(tl_rdma_buffer);
-   //    while (true) {
-   //       if (nodeId == nodeId_) {
-   //          std::memcpy(tl_rdma_buffer,(uint8_t*)addr, sizeof(TypedFaRMTuple<Record>));
-   //       } else {
-   //          // rdma read
-   //          rdma::postRead(f, *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
-   //          // -------------------------------------------------------------------------------------
-   //          int comp{0};
-   //          ibv_wc wcReturn;
-   //          while (comp == 0) {
-   //             comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
-   //             if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
-   //          }
-   //       }
-   //       ensure(f);
-   //       if (f->consistent()) break;
-   //       backoff(); // retry
-   //    }
+   //=== low-level RDMA wrappers ===//
 
-   //    Record record;
-   //    utils::fromFaRM(f->cachelines,record);
-   //    return record;
-   // }
+   // returns old value; before increment
+   uint64_t fetchAdd(uint64_t increment, RemotePtr remote_ptr, rdma::completion wc) {
+      auto nodeId = remote_ptr.getOwner();
+      auto addr = remote_ptr.plainOffset();
+      auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer);
+      rdma::postFetchAdd(increment, old, *(cctxs[nodeId].rctx), wc, addr);
+      int comp{0};
+      ibv_wc wcReturn;
+      while (wc == rdma::completion::signaled && comp == 0) {
+         comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
+         if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
+      }
+      return *old;
+   }
 
-   // -------------------------------------------------------------------------------------
-   // template <class Record>
-   // bool writeRecord(Record& record, NodeID nodeId, uintptr_t addr) {
-   //    using namespace farm::utils;
-   //    TypedFaRMTuple<Record>* f = reinterpret_cast<TypedFaRMTuple<Record>*>(tl_rdma_buffer);
-   //    if(!f->latch()) throw std::logic_error("thread local buffer should be latchable");
-   //    // -------------------------------------------------------------------------------------
-   //    // copy new record to tl buffer
-   //    utils::toFaRM(record,f);
-   //    // -------------------------------------------------------------------------------------
-   //    if (nodeId == nodeId_) {
-   //      TypedFaRMTuple<Record>* target = reinterpret_cast<TypedFaRMTuple<Record>*>(addr);
-   //      if (!target->latch()) return false;
-   //      if(!f->compareVersions(*target)){
-   //         target->unlatch();
-   //         backoff();
-   //         return false;
-   //      }
-   //      *target = *f;
-   //      target->unlatch();
-   //    } else {
-   //       // send {addr,f} to remote node node id and wait for response
-   //       auto& request = *MessageFabric::createMessage<RemoteWriteRequest>(cctxs[nodeId].outgoing);
-   //       request.nodeId = nodeId_;
-   //       request.addr = addr;
-   //       std::memcpy(&request.buffer, f, sizeof(TypedFaRMTuple<Record>));
-   //       auto& response = writeMsgSync<rdma::RemoteWriteResponse>(nodeId, request);
-   //       ensure(request.addr == response.addr);
-   //       if(response.rc == rdma::RESULT::ABORTED){
-   //          return false;
-   //       }
-   //    }
-   //    return true;
-   // }
+   // returns true if succeeded
+   bool compareSwap(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc) {
+      auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer);
+      auto nodeId = remote_ptr.getOwner();
+      auto addr = remote_ptr.plainOffset();
+
+      rdma::postCompareSwap(expected, desired, old, *(cctxs[nodeId].rctx), wc, addr);
+      int comp{0};
+      ibv_wc wcReturn;
+      while (wc == rdma::completion::signaled && comp == 0) {
+         comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
+         if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
+      }
+      return (*old == expected);
+   }
+
+   //=== barrier ===//
 
    void rdma_barrier_wait(uint64_t stage) {
       {

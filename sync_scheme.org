@@ -9,7 +9,6 @@
 
 * New Implementation B+ Tree
 
-
 ** Abstractions
 
 *** Tree

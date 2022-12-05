@@ -41,12 +41,14 @@ struct WorkerCounters {
    enum Name {
       tx_p,
       latency,
+      mh_msgs_handled,
       COUNT,
    };
    // -------------------------------------------------------------------------------------
    static const constexpr inline std::array<std::string_view, COUNT> workerCounterTranslation{
        "tx/sec",
        "latency",
+       "msgs. handled",
    };
    static_assert(workerCounterTranslation.size() == COUNT);
    // -------------------------------------------------------------------------------------
@@ -58,6 +60,7 @@ struct WorkerCounters {
    static const constexpr inline std::array<LOG_ENTRY, COUNT> workerCounterLogLevel{{
        {"tx/sec", LOG_LEVEL::RELEASE},
        {"latency", LOG_LEVEL::RELEASE},
+       {"msgs. handled", LOG_LEVEL::RELEASE},
    }};
    // -------------------------------------------------------------------------------------
    

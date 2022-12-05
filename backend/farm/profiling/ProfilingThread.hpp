@@ -23,6 +23,25 @@ struct WorkloadInfo{
    virtual void csvHeader(std::ofstream& file) = 0;
 };
 
+struct EmptyWorkloadInfo : WorkloadInfo{
+   virtual std::vector<std::string> getRow(){ return {};}
+   virtual std::vector<std::string> getHeader(){ return {};}
+   virtual void csv(std::ofstream& file){}
+   virtual void csvHeader(std::ofstream& file){}
+};
+
+
+inline void wait_until_next(decltype(std::chrono::high_resolution_clock::now()) next) {
+   using namespace std::chrono;
+   high_resolution_clock::time_point current = high_resolution_clock::now();
+   duration<double> time_span = duration_cast<duration<double>>(next - current);
+   while (time_span.count() > 0) {
+      current = high_resolution_clock::now();
+      time_span = duration_cast<duration<double>>(next - current);
+      _mm_pause();
+   }
+}
+
 struct ProfilingThread {
    void profile(NodeID nodeId, WorkloadInfo& wlInfo)
    {
@@ -206,7 +225,7 @@ struct ProfilingThread {
          // -------------------------------------------------------------------------------------
          std::fill(workerCounterAgg.begin(), workerCounterAgg.end(), 0);
          cpuCountersAgg.clear();
-         std::this_thread::sleep_until(next);
+         wait_until_next(next);
          next += 1s;
       }
    }

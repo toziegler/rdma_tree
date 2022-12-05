@@ -156,6 +156,7 @@ void MessageHandler::startThread() {
          uint8_t* mailboxes = mbPartition.mailboxes;
          const uint64_t beginId = mbPartition.beginId;
          uint64_t startPosition = 0;  // randomize messages
+         profiling::WorkerCounters counters;  // create counters
          uint64_t mailboxIdx = 0;
          std::vector<uint64_t> latencies(mbPartition.numberMailboxes);
 
@@ -224,6 +225,7 @@ void MessageHandler::startThread() {
                                               std::to_string((size_t)ctx.request->type));
 
                }
+               counters.incr(profiling::WorkerCounters::mh_msgs_handled);
             }
             mailboxIdx = ++startPosition;
          }
