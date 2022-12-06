@@ -14,14 +14,15 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
       cctxs(FLAGS_storage_nodes),
       threadContext(std::make_unique<ThreadContext>()) {
    ThreadContext::tlsPtr = threadContext.get();
-   tl_rdma_buffer = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER,64); 
+    tl_rdma_buffer = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER,64); 
+    // cas_buffer = (uint64_t*)cm.getGlobalBuffer().allocate(64,64); 
    // -------------------------------------------------------------------------------------
    // Connection to MessageHandler
    // -------------------------------------------------------------------------------------
    // First initiate connection
    for (uint64_t n_i = 0; n_i < FLAGS_storage_nodes; n_i++) {
       // -------------------------------------------------------------------------------------
-      auto& ip = NODES[FLAGS_storage_nodes][n_i];
+        auto& ip = NODES[FLAGS_storage_nodes][n_i];
       cctxs[n_i].rctx = &(cm.initiateConnection(ip, rdma::Type::WORKER, workerId, nodeId));
       // -------------------------------------------------------------------------------------
       cctxs[n_i].incoming = (rdma::Message*)cm.getGlobalBuffer().allocate(rdma::LARGEST_MESSAGE, CACHE_LINE);
@@ -54,8 +55,12 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
          if (tables.size() <= t_i) tables.emplace_back();
          tables.back().addPartition({.offset = msg.tables[t_i].offset, .begin = msg.tables[t_i].begin, .end= msg.tables[t_i].end, .nodeId = msg.nodeId});
       }
-      if(msg.nodeId == 0)
+      if(msg.nodeId == 0){
          barrier = msg.barrierAddr;
+         metadataPage = RemotePtr(msg.nodeId, msg.metadataOffset);
+         std::cout << "Metadata page " << metadataPage.offset << "\n";
+
+      }
    }
 
    std::cout << "Connection established" << "\n";

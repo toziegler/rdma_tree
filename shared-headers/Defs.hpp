@@ -150,7 +150,7 @@ constexpr RemotePtr NULL_REMOTEPTR ((~uint8_t(0)), (~uint64_t(0)));
 constexpr uint64_t EMPTY_PVERSION ((~uint64_t(0)));
 constexpr uint64_t EMPTY_EPOCH ((~uint64_t(0)));
 static constexpr uint64_t MAX_TABLES = 10;
-static constexpr uint64_t THREAD_LOCAL_RDMA_BUFFER = 1024; // 1kb
+static constexpr uint64_t THREAD_LOCAL_RDMA_BUFFER = 8192; // 8kb
 
 // -------------------------------------------------------------------------------------
 // helper functions

@@ -6,9 +6,9 @@ project('rdma_tree', ['c', 'cpp'],
         'c_std=c11',
         'cpp_std=c++20',
         'buildtype=release',
-        'b_lto=true',
+        # 'b_lto=true',
         # 'buildtype=debug',
-        # 'b_sanitize=address',
+        'b_sanitize=address',
     ])
     
 

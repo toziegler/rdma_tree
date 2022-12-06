@@ -6,6 +6,7 @@
 #include "farm/utils/FarmHelper.hpp"
 // -------------------------------------------------------------------------------------
 #include <algorithm>
+#include <cstdint>
 #include <numeric>
 #include <random>
 
@@ -98,6 +99,7 @@ void MessageHandler::init() {
       initServer->nodeId = nodeId;
       initServer->barrierAddr = (uintptr_t)db.barrier;
       initServer->nodeId = nodeId;
+      initServer->metadataOffset = (uintptr_t)db.md;
       initServer->threadId = 1000;
       // initServer->num_tables = db.catalog.size();
       // ensure(initServer->num_tables < MAX_TABLES);

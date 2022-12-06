@@ -38,6 +38,7 @@ struct InitMessage {
    uintptr_t plResponseOffset;
    uintptr_t barrierAddr;
    uintptr_t scanResultOffset; // offset to receive scan result 
+   uintptr_t metadataOffset; // only node 0 sends this
    NodeID nodeId;  // node id of buffermanager the initiator belongs to
    uint64_t threadId;
    uint64_t num_tables;

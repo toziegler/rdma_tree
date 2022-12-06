@@ -7,6 +7,7 @@
 #include "threads/CoreManager.hpp"
 #include "threads/WorkerPool.hpp"
 #include "db/btree.hpp"
+#include "db/onesidedBtree.hpp"
 #include "farm/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <memory>
@@ -69,11 +70,12 @@ class Storage
       return mh->connectedClients;
    }
 
-   uint64_t* barrier;
-
    auto& getTree(){
       return tree;
    }
+   
+   uint64_t* barrier;
+   onesided::MetadataPage* md;
    
   private:
    NodeID nodeId = 0;
@@ -83,7 +85,7 @@ class Storage
    std::unique_ptr<profiling::RDMACounters> rdmaCounters;
    profiling::ProfilingThread pt;
    std::vector<std::thread> profilingThread;
-
+   
 
 };
 // -------------------------------------------------------------------------------------
