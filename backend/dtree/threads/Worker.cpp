@@ -15,7 +15,7 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
       threadContext(std::make_unique<ThreadContext>()) {
    ThreadContext::tlsPtr = threadContext.get();
    tl_rdma_buffer = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER, 64);
-   // cas_buffer = (uint64_t*)cm.getGlobalBuffer().allocate(64,64);
+   cas_buffer = (uint64_t*)cm.getGlobalBuffer().allocate(64,64);
    // -------------------------------------------------------------------------------------
    // Connection to MessageHandler
    // -------------------------------------------------------------------------------------
