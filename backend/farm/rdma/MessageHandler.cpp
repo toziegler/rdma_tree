@@ -193,7 +193,7 @@ void MessageHandler::startThread() {
                      auto& request = *reinterpret_cast<rdma::LookupRequest*>(ctx.request);
                      auto& response = *MessageFabric::createMessage<rdma::LookupResponse>(ctx.response);
                      response.rc = rdma::RESULT::ABORTED;
-                     Value result;
+                     Value result = 0;
                      if(tree.lookup(request.key, result))
                         response.rc = rdma::RESULT::COMMITTED;
                      response.value = result;

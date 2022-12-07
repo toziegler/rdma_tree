@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cassert>
 #include <csignal>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <vector>
@@ -312,7 +313,7 @@ struct BTreeInner : public BTreeInnerBase {
    BTreeInner* split(Key& sep) {
       BTreeInner* newInner = new BTreeInner();
       newInner->count = count - (count / 2);
-      count = count - newInner->count - 1;
+      count = static_cast<uint16_t>(count - newInner->count - static_cast<uint16_t>(1));
       sep = keys[count];
       memcpy(newInner->keys, keys + count + 1, sizeof(Key) * (newInner->count + 1));
       memcpy(newInner->children, children + count + 1, sizeof(NodeBase*) * (newInner->count + 1));

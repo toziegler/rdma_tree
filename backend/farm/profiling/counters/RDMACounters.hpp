@@ -34,7 +34,7 @@ struct RDMACounters {
          counterFile.close();
 
          size_t bytes = value * 4; // 4 lanes
-         double diff  = (bytes -prevValue);
+         size_t diff  = (bytes -prevValue);
          prevValue = bytes;         
          return diff;
       }

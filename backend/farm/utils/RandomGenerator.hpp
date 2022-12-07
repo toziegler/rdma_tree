@@ -3,6 +3,7 @@
 #include "Defs.hpp"
 // -------------------------------------------------------------------------------------
 #include <atomic>
+#include <cstdint>
 #include <random>
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -89,7 +90,7 @@ class RandomGenerator
    static void getRandString(uint8_t* dst, u64 size)
    {
       for (u64 t_i = 0; t_i < size; t_i++) {
-         dst[t_i] = getRand(48, 123);
+         dst[t_i] = getRand(static_cast<uint8_t>(48), static_cast<uint8_t>(123));
       }
 
    }  // namespace utils

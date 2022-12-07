@@ -1,24 +1,23 @@
 #include "RDMACounters.hpp"
+
 #include "../CounterRegistry.hpp"
 // -------------------------------------------------------------------------------------
 
 namespace farm {
 namespace profiling {
 
-RDMACounters::RDMACounters(): rdmaRecv(rdmaPathRecv), rdmaSent(rdmaPathXmit){
+RDMACounters::RDMACounters() : rdmaRecv(rdmaPathRecv), rdmaSent(rdmaPathXmit) {
    CounterRegistry::getInstance().registerRDMACounter(this);
 };
 // -------------------------------------------------------------------------------------
-RDMACounters::~RDMACounters(){
-   CounterRegistry::getInstance().deregisterRDMACounter(this);
+RDMACounters::~RDMACounters() { CounterRegistry::getInstance().deregisterRDMACounter(this); }
+// -------------------------------------------------------------------------------------
+double RDMACounters::getSentGB() {
+   return (static_cast<double>(rdmaSent()) / static_cast<double>(1024*1024*1024));
 }
 // -------------------------------------------------------------------------------------
-double RDMACounters::getSentGB(){   
-   return (rdmaSent() / (double)(1024*1024*1024));   
+double RDMACounters::getRecvGB() {
+   return (static_cast<double>(rdmaRecv()) / static_cast<double>(1024*1024*1024));
 }
-// -------------------------------------------------------------------------------------
-double RDMACounters::getRecvGB(){
-   return (rdmaRecv() / (double)(1024*1024*1024));
-}
-}  // profiling
-}  // nam
+}  // namespace profiling
+}  // namespace farm

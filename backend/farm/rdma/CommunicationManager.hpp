@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <fstream>  // std::ifstream
 #include <iostream>
 #include <memory_resource>
@@ -85,7 +86,7 @@ void postWriteBatch(RdmaContext& context, completion wc, ARGS&&... args) {
 
    for (uint64_t b_i = 0; b_i < numberElements; b_i++) {
       send_sgl[b_i].addr = (uint64_t)(unsigned long)element[b_i].memAddr;
-      send_sgl[b_i].length = element[b_i].size;
+      send_sgl[b_i].length = static_cast<uint32_t>( element[b_i].size);
       send_sgl[b_i].lkey = mr->lkey;
       sq_wr[b_i].opcode = IBV_WR_RDMA_WRITE;
       sq_wr[b_i].send_flags = ((b_i == numberElements - 1) && wc) ? IBV_SEND_SIGNALED : 0;
@@ -112,7 +113,7 @@ inline void postReceive(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr) {
    struct ibv_sge recv_sgl;  /* recv single SGE */
    struct ibv_recv_wr* bad_wr;
    recv_sgl.addr = (uintptr_t)memAddr;  // important to use address of buffer not of ptr
-   recv_sgl.length = size;
+   recv_sgl.length = static_cast<uint32_t>( size);
    recv_sgl.lkey = mr->lkey;
    rq_wr.sg_list = &recv_sgl;
    rq_wr.num_sge = 1;
@@ -139,7 +140,7 @@ inline void postSend(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, complet
    struct ibv_sge send_sgl;
    struct ibv_send_wr* bad_wr;
    send_sgl.addr = (uintptr_t)memAddr;
-   send_sgl.length = size;
+   send_sgl.length = static_cast<uint32_t>( size);
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_SEND;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
@@ -166,12 +167,12 @@ inline void postSend(T* memAddr, RdmaContext& context, completion wc) {
 }
 
 inline void postFetchAdd(uint64_t to_add, void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc,
-                         size_t rkey, size_t remoteOffset, bool needFence) {
+                         uint32_t rkey, size_t remoteOffset, bool needFence) {
    struct ibv_send_wr sq_wr;
    struct ibv_sge send_sgl;
    struct ibv_send_wr* bad_wr;
    send_sgl.addr = (uintptr_t)memAddr;
-   send_sgl.length = size;
+   send_sgl.length = static_cast<uint32_t>( size);
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
@@ -187,7 +188,7 @@ inline void postFetchAdd(uint64_t to_add, void* memAddr, size_t size, ibv_qp* qp
    if (ret) throw std::runtime_error("Failed to post send request");
 }
 
-inline void postFetchAdd(uint64_t to_add, uint64_t* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey,
+inline void postFetchAdd(uint64_t to_add, uint64_t* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, uint32_t rkey,
                          size_t remoteOffset, bool needFence = false) {
    postFetchAdd(to_add, memAddr, sizeof(uint64_t), qp, mr, wc, rkey, remoteOffset, needFence);
 }
@@ -199,12 +200,12 @@ inline void postFetchAdd(uint64_t to_add, uint64_t* memAddr, RdmaContext& contex
 }
 
 inline void postCompareSwap(uint64_t expected, uint64_t desired, void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr,
-                            completion wc, size_t rkey, size_t remoteOffset) {
+                            completion wc, uint32_t rkey, size_t remoteOffset) {
    struct ibv_send_wr sq_wr;
    struct ibv_sge send_sgl;
    struct ibv_send_wr* bad_wr;
    send_sgl.addr = (uintptr_t)memAddr;
-   send_sgl.length = size;
+   send_sgl.length = static_cast<uint32_t>( size);
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_ATOMIC_CMP_AND_SWP;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
@@ -221,7 +222,7 @@ inline void postCompareSwap(uint64_t expected, uint64_t desired, void* memAddr, 
 }
 
 inline void postCompareSwap(uintptr_t expected, uint64_t desired, uint64_t* memAddr, ibv_qp* qp, ibv_mr* mr,
-                            completion wc, size_t rkey, size_t remoteOffset) {
+                            completion wc, uint32_t rkey, size_t remoteOffset) {
    postCompareSwap(expected, desired, memAddr, sizeof(uint64_t), qp, mr, wc, rkey, remoteOffset);
 }
 
@@ -231,13 +232,13 @@ inline void postCompareSwap(uint64_t expected, uint64_t desired, uint64_t* memAd
                    remoteOffset);
 }
 
-inline void postWrite(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey,
+inline void postWrite(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, uint32_t rkey,
                       size_t remoteOffset) {
    struct ibv_send_wr sq_wr;
    struct ibv_sge send_sgl;
    struct ibv_send_wr* bad_wr;
    send_sgl.addr = (uint64_t)(unsigned long)memAddr;
-   send_sgl.length = size;
+   send_sgl.length = static_cast<uint32_t>( size);
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_RDMA_WRITE;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
@@ -254,7 +255,7 @@ inline void postWrite(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, comple
 }
 
 template <typename T>
-inline void postWrite(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset) {
+inline void postWrite(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, uint32_t rkey, size_t remoteOffset) {
    static_assert(!std::is_void<T>::value, "post write cannot be called with void");
    postWrite(memAddr, sizeof(T), qp, mr, wc, rkey, remoteOffset);
 }
@@ -271,13 +272,13 @@ inline void postWrite(T* memAddr, RdmaContext& context, completion wc, size_t re
    postWrite(memAddr, bytes, context.id->qp, context.mr, wc, context.rkey, remoteOffset);
 }
 
-inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey,
+inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, completion wc, uint32_t rkey,
                      size_t remoteOffset, size_t wcId = 0, bool needFence = false) {
    struct ibv_send_wr sq_wr;
    struct ibv_sge send_sgl;
    struct ibv_send_wr* bad_wr;
    send_sgl.addr = (uint64_t)(unsigned long)memAddr;
-   send_sgl.length = size;
+   send_sgl.length = static_cast<uint32_t>( size);
    send_sgl.lkey = mr->lkey;
    sq_wr.opcode = IBV_WR_RDMA_READ;
    sq_wr.send_flags = wc ? IBV_SEND_SIGNALED : 0;
@@ -293,7 +294,7 @@ inline void postRead(void* memAddr, size_t size, ibv_qp* qp, ibv_mr* mr, complet
 }
 
 template <typename T>
-inline void postReadFenced(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset,
+inline void postReadFenced(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, uint32_t rkey, size_t remoteOffset,
                            size_t wcId = 0) {
    static_assert(!std::is_void<T>::value, "post write cannot be called with void");
    postRead(memAddr, sizeof(T), qp, mr, wc, rkey, remoteOffset, wcId, true);
@@ -313,7 +314,7 @@ inline void postReadFenced(T* memAddr, RdmaContext& context, completion wc, size
 }
 
 template <typename T>
-inline void postRead(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, size_t rkey, size_t remoteOffset,
+inline void postRead(T* memAddr, ibv_qp* qp, ibv_mr* mr, completion wc, uint32_t rkey, size_t remoteOffset,
                      size_t wcId = 0) {
    static_assert(!std::is_void<T>::value, "post write cannot be called with void");
    postRead(memAddr, sizeof(T), qp, mr, wc, rkey, remoteOffset, wcId);
@@ -332,7 +333,7 @@ inline void postRead(T* memAddr, RdmaContext& context, completion wc, size_t rem
 }
 
 // low level wrapper; once returned every wc need to be checked for success
-inline int pollCompletion(ibv_cq* cq, size_t expected, ibv_wc* wcReturn) {
+inline int pollCompletion(ibv_cq* cq, int expected, ibv_wc* wcReturn) {
    int numCompletions{0};
    numCompletions = ibv_poll_cq(cq, expected, wcReturn);
    if (numCompletions < 0) throw std::runtime_error("Poll cq failed");
@@ -341,7 +342,7 @@ inline int pollCompletion(ibv_cq* cq, size_t expected, ibv_wc* wcReturn) {
 
 // lambda function can be passed to evaluate status etc.
 template <typename F>
-inline int pollCompletion(ibv_cq* cq, size_t expected, ibv_wc* wcReturn, F& func) {
+inline int pollCompletion(ibv_cq* cq, int expected, ibv_wc* wcReturn, F& func) {
    int numCompletions = pollCompletion(cq, expected, wcReturn);
    func(numCompletions);
    return numCompletions;
@@ -353,8 +354,8 @@ class CM {
    //! Default constructor
    CM(const std::experimental::source_location location =
                std::experimental::source_location::current())
-       : port(htons(FLAGS_port)),
-         mbr(FLAGS_dramGB * FLAGS_rdmaMemoryFactor * 1024 * 1024 * 1024),
+      : port(htons(static_cast<uint16_t>(FLAGS_port))),
+         mbr(static_cast<size_t>(FLAGS_dramGB * FLAGS_rdmaMemoryFactor * 1024 * 1024 * 1024)),
          running(FLAGS_storage_node),
          handler(&CM::handle, this) {
       std::cout << "Called constructor " << std::endl;
@@ -590,7 +591,7 @@ class CM {
       return incomingIds;
    };
 
-   utils:SynchronizedMonotonicBufferRessource& getGlobalBuffer() { return mbr; }
+   utils::SynchronizedMonotonicBufferRessource& getGlobalBuffer() { return mbr; }
 
    void exchangeInitialMesssage(RdmaContext& context, INITIAL_MSG* initialMessage) {
       DEBUG_LOG("Exchanging Experimetn Infos");

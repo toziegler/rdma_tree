@@ -76,11 +76,6 @@ inline void DO_NOT_OPTIMIZE(T const& value)
       assert(false);      \
    }
 
-static void TODO(std::string&& todo){
-   std::cout << todo << std::endl;
-}
-
-
 // Btree key and value 
 using Key = uint64_t;
 using Value = uint64_t;

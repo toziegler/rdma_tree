@@ -186,7 +186,7 @@ class zipf_distribution
 			, spole(abs(oms) < epsilon)
 			, rvs(spole ? 0.0 : 1.0/oms)
 			, H_x1(H(1.5) - h(1.0))
-			, H_n(H(n + 0.5))
+			, H_n(H(static_cast<double>(n) + 0.5))
 			, cut(1.0 - H_inv(H(1.5) - h(1.0)))
 		{
 			if (-0.5 >= q)
@@ -203,9 +203,9 @@ class zipf_distribution
                // double randomValue = ((double) rand() / (RAND_MAX));
                const RealType u =H_x1 + randomValue *( H_n - H_x1 );
                const RealType x = H_inv(u);
-               const IntType  k = std::round(x);
-               if (k - x <= cut) return k;
-               if (u >= H(k + 0.5) - h(k))
+               const IntType  k = static_cast<IntType>(std::round(x));
+               if (static_cast<RealType>(static_cast<double>(k) - x) <= cut) return k;
+               if (u >= H(static_cast<RealType>(k) + 0.5) - h(static_cast<RealType>(k)))
                   return k;
 			}
 		}

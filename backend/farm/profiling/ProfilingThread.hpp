@@ -21,6 +21,7 @@ struct WorkloadInfo{
    virtual std::vector<std::string> getHeader() = 0;
    virtual void csv(std::ofstream& file) = 0;
    virtual void csvHeader(std::ofstream& file) = 0;
+   virtual ~WorkloadInfo() = default;
 };
 
 struct EmptyWorkloadInfo : WorkloadInfo{
@@ -100,13 +101,13 @@ struct ProfilingThread {
             // -------------------------------------------------------------------------------------
             if(c_i == WorkerCounters::tx_p){
                header.push_back({WorkerCounters::workerCounterTranslation[c_i]});
-               row.push_back(convert_humanreadable(workerCounterAgg[c_i]));
+               row.push_back(convert_humanreadable(static_cast<double>(workerCounterAgg[c_i])));
                continue;
             }
             // -------------------------------------------------------------------------------------
             if (c_i == WorkerCounters::latency && workerCounterAgg[WorkerCounters::tx_p] > 0) {
                header.push_back({WorkerCounters::workerCounterTranslation[c_i]});
-               row.push_back(std::string(convert_precision(workerCounterAgg[c_i] / (double)workerCounterAgg[WorkerCounters::tx_p])));
+               row.push_back(std::string(convert_precision(static_cast<double>(workerCounterAgg[c_i]) / (double)workerCounterAgg[WorkerCounters::tx_p])));
                continue;
             }
             // -------------------------------------------------------------------------------------
@@ -117,10 +118,10 @@ struct ProfilingThread {
          auto tx_p = workerCounterAgg[WorkerCounters::tx_p];
          CounterRegistry::getInstance().aggregateCPUCounter(cpuCountersAgg);
          header.insert(header.end(), {{"inst/tx"}, {"L1-M/tx"}, {"cycl/tx"}, {"LLC-M/tx"}, {"CPU"}});
-         row.insert(row.end(), { convert_humanreadable(cpuCountersAgg["instructions"]/tx_p),
-                                 convert_precision(cpuCountersAgg["L1-misses"] / tx_p),
-                                 convert_humanreadable(cpuCountersAgg["cycles"] / tx_p),
-                                 convert_precision(cpuCountersAgg["LLC-misses"] / tx_p),
+         row.insert(row.end(), { convert_humanreadable(cpuCountersAgg["instructions"]/static_cast<double>(tx_p)),
+                                 convert_precision(cpuCountersAgg["L1-misses"] / static_cast<double>(tx_p)),
+                                 convert_humanreadable(cpuCountersAgg["cycles"] / static_cast<double>(tx_p)),
+                                 convert_precision(cpuCountersAgg["LLC-misses"] / static_cast<double>(tx_p)),
                                  convert_precision(cpuCountersAgg["CPU"])});
 
          // -------------------------------------------------------------------------------------
@@ -189,16 +190,16 @@ struct ProfilingThread {
 
             for (uint64_t c_i = 0; c_i < WorkerCounters::COUNT; c_i++) {
                if (c_i == WorkerCounters::latency && workerCounterAgg[WorkerCounters::tx_p] > 0) {
-                  csv_file << workerCounterAgg[c_i] / (double)workerCounterAgg[WorkerCounters::tx_p] << " , ";
+                  csv_file << static_cast<double>(workerCounterAgg[c_i]) / static_cast<double>(workerCounterAgg[WorkerCounters::tx_p]) << " , ";
                } else {
                   csv_file << workerCounterAgg[c_i] << " , ";
                }
             }
 
-            csv_file << cpuCountersAgg["instructions"] / tx_p << " , ";
-            csv_file << cpuCountersAgg["L1-misses"] / tx_p << " , ";
-            csv_file << cpuCountersAgg["cycles"] / tx_p << " , ";
-            csv_file << cpuCountersAgg["LLC-misses"] / tx_p << " , ";
+            csv_file << cpuCountersAgg["instructions"] / static_cast<double>(tx_p) << " , ";
+            csv_file << cpuCountersAgg["L1-misses"] / static_cast<double>(tx_p) << " , ";
+            csv_file << cpuCountersAgg["cycles"] / static_cast<double>(tx_p) << " , ";
+            csv_file << cpuCountersAgg["LLC-misses"] / static_cast<double>(tx_p) << " , ";
             csv_file << cpuCountersAgg["CPU"] << " , ";
             csv_file << FLAGS_worker << " , ";
             csv_file << FLAGS_storage_nodes << " , ";

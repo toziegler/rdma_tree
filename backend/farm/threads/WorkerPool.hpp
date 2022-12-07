@@ -33,7 +33,7 @@ class WorkerPool
    std::vector<std::thread> workerThreads;
    std::vector<Worker*> workers;
    WorkerThread workerThreadsMeta [MAX_WORKER_THREADS];
-   uint32_t workersCount;
+   uint64_t workersCount;
   public:
    
    // -------------------------------------------------------------------------------------
