@@ -3,7 +3,6 @@
 #include "dtree/Compute.hpp"
 #include "dtree/Config.hpp"
 #include "dtree/Storage.hpp"
-#include "dtree/db/onesidedBtree.hpp"
 #include "dtree/profiling/ProfilingThread.hpp"
 #include "dtree/profiling/counters/WorkerCounters.hpp"
 #include "dtree/threads/Concurrency.hpp"

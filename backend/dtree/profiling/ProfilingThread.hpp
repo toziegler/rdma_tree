@@ -27,8 +27,8 @@ struct WorkloadInfo{
 struct EmptyWorkloadInfo : WorkloadInfo{
    virtual std::vector<std::string> getRow(){ return {};}
    virtual std::vector<std::string> getHeader(){ return {};}
-   virtual void csv(std::ofstream& file){}
-   virtual void csvHeader(std::ofstream& file){}
+   virtual void csv(std::ofstream& /*file*/){}
+   virtual void csvHeader(std::ofstream& /*file*/){}
 };
 
 

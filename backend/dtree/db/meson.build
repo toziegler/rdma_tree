@@ -1,6 +1,8 @@
 project_headers += files(
   'btree.hpp',
-  'onesidedBtree.hpp'
+  'OneSidedLatches.hpp', 
+  'OneSidedBTree.hpp',
+  'OneSidedTypes.hpp'
 )
 project_sources += files(
 )

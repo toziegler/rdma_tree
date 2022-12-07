@@ -6,6 +6,7 @@
 
 #include "Defs.hpp"
 #include "ThreadContext.hpp"
+#include "dtree/db/OneSidedTypes.hpp"
 #include "dtree/profiling/counters/CPUCounters.hpp"
 #include "dtree/profiling/counters/WorkerCounters.hpp"
 #include "dtree/rdma/CommunicationManager.hpp"
@@ -50,8 +51,10 @@ struct Worker {
    uintptr_t barrier;
    RemotePtr metadataPage;
    // -------------------------------------------------------------------------------------
-   uint8_t* tl_rdma_buffer;
-   uint64_t* cas_buffer; // cache line sized 
+   uint8_t* tl_rdma_buffer[2];
+   uint64_t* cas_buffer[2];  // cache line sized
+   size_t current_position = 0;
+   void nextCache() { current_position = ((current_position + 1) % 2); }
    // -------------------------------------------------------------------------------------
    Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>& cm, NodeID nodeId);
    ~Worker();
@@ -94,35 +97,49 @@ struct Worker {
 
    //=== low-level RDMA wrappers ===//
 
-   
-   
    template <typename T>
-   void remote_write(RemotePtr remote_ptr, /*must be RDMA memory*/ T* local_copy) {
+   void remote_write(RemotePtr remote_ptr, /*must be RDMA memory*/ T* local_copy, rdma::completion wc) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-      rdma::postWrite(const_cast<T*>(local_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
+      rdma::postWrite(const_cast<T*>(local_copy), *(cctxs[nodeId].rctx), wc, addr);
+      int comp{0};
+      ibv_wc wcReturn;
+      while (wc == rdma::completion::signaled && comp == 0) {
+         comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
+         if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
+      }
+   }
+
+   onesided::PageHeader* read_latch(RemotePtr remote_ptr){
+      auto nodeId = remote_ptr.getOwner();
+      auto addr = remote_ptr.plainOffset();
+      // TODO read complete first cache line 
+      volatile onesided::PageHeader* remote_copy = reinterpret_cast<onesided::PageHeader*>(cas_buffer[current_position]);
+      rdma::postRead(const_cast<onesided::PageHeader*>(remote_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
       int comp{0};
       ibv_wc wcReturn;
       while (comp == 0) {
-         comp = rdma::pollCompletion(cctxs[0].rctx->id->qp->send_cq, 1, &wcReturn);
-            if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
-        }
-   }
+         comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
+         if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
+      }
 
+      return const_cast<onesided::PageHeader*>(remote_copy);
+   }
+   
    template <typename T>
    T* remote_read(RemotePtr remote_ptr) {
       ensure(sizeof(T) <= THREAD_LOCAL_RDMA_BUFFER);
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-      volatile T* remote_copy = reinterpret_cast<T*>(tl_rdma_buffer);
+      volatile T* remote_copy = reinterpret_cast<T*>(tl_rdma_buffer[current_position]);
 
       rdma::postRead(const_cast<T*>(remote_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
       int comp{0};
       ibv_wc wcReturn;
       while (comp == 0) {
-         comp = rdma::pollCompletion(cctxs[0].rctx->id->qp->send_cq, 1, &wcReturn);
-            if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
-        }
+         comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
+         if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
+      }
 
       return const_cast<T*>(remote_copy);
    }
@@ -131,7 +148,7 @@ struct Worker {
    uint64_t fetchAdd(uint64_t increment, RemotePtr remote_ptr, rdma::completion wc) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-      auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer);
+      auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer[current_position]);
       rdma::postFetchAdd(increment, old, *(cctxs[nodeId].rctx), wc, addr);
       int comp{0};
       ibv_wc wcReturn;
@@ -150,18 +167,18 @@ struct Worker {
          comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
          if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
       }
-      auto* old = reinterpret_cast<uint64_t*>(cas_buffer);
+      auto* old = reinterpret_cast<uint64_t*>(cas_buffer[current_position]);
       return (*old == expected);
    }
    void compareSwapAsync(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc) {
-      auto* old = reinterpret_cast<uint64_t*>(cas_buffer);
+      auto* old = reinterpret_cast<uint64_t*>(cas_buffer[current_position]);
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
       rdma::postCompareSwap(expected, desired, old, *(cctxs[nodeId].rctx), wc, addr);
    }
    // returns true if succeeded
    bool compareSwap(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc) {
-      auto* old = reinterpret_cast<uint64_t*>(cas_buffer);
+      auto* old = reinterpret_cast<uint64_t*>(cas_buffer[current_position]);
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
 
@@ -179,7 +196,7 @@ struct Worker {
 
    void rdma_barrier_wait(uint64_t stage) {
       {
-         auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer);
+         auto* old = reinterpret_cast<uint64_t*>(tl_rdma_buffer[current_position]);
          rdma::postFetchAdd(1, old, *(cctxs[0].rctx), rdma::completion::signaled, barrier);
          int comp{0};
          ibv_wc wcReturn;
@@ -189,7 +206,7 @@ struct Worker {
          }
       }
 
-      volatile auto* barrier_value = reinterpret_cast<uint64_t*>(tl_rdma_buffer);
+      volatile auto* barrier_value = reinterpret_cast<uint64_t*>(tl_rdma_buffer[current_position]);
       uint64_t expected = (FLAGS_compute_nodes * FLAGS_worker) * stage;
 
       while (*barrier_value != expected) {

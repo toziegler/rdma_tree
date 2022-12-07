@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include "Defs.hpp"
 
 //=== Two-sided B+Tree ===//
 // This tree is used by the message handlers on the storage node
@@ -15,7 +16,7 @@ namespace twosided {
 
 enum class PageType : uint8_t { BTreeInner = 1, BTreeLeaf = 2 };
 
-static const uint64_t pageSize = 4 * 1024;
+static const uint64_t pageSize = BTREE_NODE_SIZE;
 
 struct OptLock {
    std::atomic<uint64_t> typeVersionLockObsolete{0b100};

@@ -7,7 +7,7 @@
 #include "threads/CoreManager.hpp"
 #include "threads/WorkerPool.hpp"
 #include "db/btree.hpp"
-#include "db/onesidedBtree.hpp"
+#include "db/OneSidedTypes.hpp"
 #include "dtree/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <memory>

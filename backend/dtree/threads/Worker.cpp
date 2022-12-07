@@ -14,8 +14,10 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
       cctxs(FLAGS_storage_nodes),
       threadContext(std::make_unique<ThreadContext>()) {
    ThreadContext::tlsPtr = threadContext.get();
-   tl_rdma_buffer = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER, 64);
-   cas_buffer = (uint64_t*)cm.getGlobalBuffer().allocate(64,64);
+   tl_rdma_buffer[0] = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER, 64);
+   tl_rdma_buffer[1] = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER, 64);
+   cas_buffer[0] = (uint64_t*)cm.getGlobalBuffer().allocate(64,64);
+   cas_buffer[1] = (uint64_t*)cm.getGlobalBuffer().allocate(64,64); // must have more space than latch 
    // -------------------------------------------------------------------------------------
    // Connection to MessageHandler
    // -------------------------------------------------------------------------------------

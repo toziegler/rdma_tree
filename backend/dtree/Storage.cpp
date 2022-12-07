@@ -7,7 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#include "dtree/db/onesidedBtree.hpp"
+#include "dtree/db/OneSidedBTree.hpp"
 // -------------------------------------------------------------------------------------
 namespace dtree {
 Storage::Storage() {
@@ -37,5 +37,6 @@ Storage::Storage() {
 Storage::~Storage() {
    stopProfiler();
    mh.reset();
+   std::cout << "Destructing storage " << md->getRootPtr().offset << "\n";
 }
 }  // namespace dtree

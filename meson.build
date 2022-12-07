@@ -1,14 +1,14 @@
 project('rdma_tree', ['c', 'cpp'],
     version: '1.0.0',
     default_options: [
-        # 'werror=true',
-        # 'warning_level=3',
+        'werror=true',
+        'warning_level=3',
         'c_std=c11',
         'cpp_std=c++20',
-        'buildtype=release',
-        'b_lto=true',
-        # 'buildtype=debug',
-        # 'b_sanitize=address',
+        # 'buildtype=release',
+        # 'b_lto=true',
+        'buildtype=debug',
+        'b_sanitize=address',
     ])
     
 
