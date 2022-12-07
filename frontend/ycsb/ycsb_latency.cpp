@@ -1,10 +1,10 @@
 #include "PerfEvent.hpp"
-#include "farm/Config.hpp"
-#include "farm/Farm.hpp"
-#include "farm/rdma/CommunicationManager.hpp"
-#include "farm/utils/RandomGenerator.hpp"
-#include "farm/utils/ScrambledZipfGenerator.hpp"
-#include "farm/utils/Time.hpp"
+#include "dtree/Config.hpp"
+#include "dtree/Dtree.hpp"
+#include "dtree/rdma/CommunicationManager.hpp"
+#include "dtree/utils/RandomGenerator.hpp"
+#include "dtree/utils/ScrambledZipfGenerator.hpp"
+#include "dtree/utils/Time.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 // -------------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ struct Partition {
    uint64_t end;
 };
 // -------------------------------------------------------------------------------------
-struct YCSB_workloadInfo : public farm::profiling::WorkloadInfo {
+struct YCSB_workloadInfo : public dtree::profiling::WorkloadInfo {
    std::string experiment;
    uint64_t elements;
    uint64_t readRatio;
@@ -163,10 +163,10 @@ struct ycsb_t {
 
 
 // -------------------------------------------------------------------------------------
-using namespace farm;
+using namespace dtree;
 int main(int argc, char* argv[]) {
 
-   std::cout << "FARM-DB benchmark" << "\n";
+   std::cout << "DTREE-DB benchmark" << "\n";
 
    gflags::SetUsageMessage("Catalog Test");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
@@ -199,7 +199,7 @@ int main(int argc, char* argv[]) {
    }
 
 
-   FaRM farm;
+   Dtree dtree;
    // -------------------------------------------------------------------------------------
    auto partition = [&](uint64_t id, uint64_t participants, uint64_t N) -> Partition {
       const uint64_t blockSize = N / participants;
@@ -213,15 +213,15 @@ int main(int argc, char* argv[]) {
    uint64_t barrier_stage = 1;
    auto barrier_wait = [&]() {
       for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
-         farm.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() { threads::Worker::my().rdma_barrier_wait(barrier_stage); });
+         dtree.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() { threads::Worker::my().rdma_barrier_wait(barrier_stage); });
       }
-      farm.getWorkerPool().joinAll();
+      dtree.getWorkerPool().joinAll();
       barrier_stage++;
    };   
    // -------------------------------------------------------------------------------------
    u64 YCSB_tuple_count = FLAGS_YCSB_tuple_count;
    // -------------------------------------------------------------------------------------
-   auto nodePartition = partition(farm.getNodeID(), FLAGS_nodes, YCSB_tuple_count);
+   auto nodePartition = partition(dtree.getNodeID(), FLAGS_nodes, YCSB_tuple_count);
    // -------------------------------------------------------------------------------------
    // Build YCSB Table / Tree
    // -------------------------------------------------------------------------------------
@@ -229,24 +229,24 @@ int main(int argc, char* argv[]) {
       // -------------------------------------------------------------------------------------
    // create Table 
    // -------------------------------------------------------------------------------------
-   farm.registerTable<ycsb_t>("ycsb",nodePartition.begin,nodePartition.end);
-   auto& table = farm.getTable("ycsb");
+   dtree.registerTable<ycsb_t>("ycsb",nodePartition.begin,nodePartition.end);
+   auto& table = dtree.getTable("ycsb");
    // -------------------------------------------------------------------------------------
    // start db
-   farm.startAndConnect();
+   dtree.startAndConnect();
    // -------------------------------------------------------------------------------------
    // Fill Table 
    // -------------------------------------------------------------------------------------
    std::cout << "Data generation " << std::endl;
    for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
-      farm.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
+      dtree.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
          table.mt_bulk_load_local<ycsb_t>(t_i, [](uint64_t t_id, ycsb_t& record) {
             record.key = t_id;
             utils::RandomGenerator::getRandString(reinterpret_cast<uint8_t*>(&record.payload), sizeof(ycsb_t::payload));
          });
       });
    }
-   farm.getWorkerPool().joinAll();
+   dtree.getWorkerPool().joinAll();
    std::cout << "Data generation [OK]" << std::endl;    
 
    for (auto& workload : workloads){
@@ -279,14 +279,14 @@ int main(int argc, char* argv[]) {
                std::atomic<bool> collect_samples = false;
                std::atomic<u64> running_threads_counter = 0;
                [[maybe_unused]] uint64_t zipf_offset = 0;
-               if (FLAGS_YCSB_local_zipf) zipf_offset = (YCSB_tuple_count / FLAGS_nodes) * farm.getNodeID();
+               if (FLAGS_YCSB_local_zipf) zipf_offset = (YCSB_tuple_count / FLAGS_nodes) * dtree.getNodeID();
 
                YCSB_workloadInfo experimentInfo{
                    TYPE, YCSB_tuple_count, READ_RATIO, TARGET_TROUGHPUT, ZIPF, (FLAGS_YCSB_local_zipf ? "local_zipf" : "global_zipf")};
-               farm.startProfiler(experimentInfo);
+               dtree.startProfiler(experimentInfo);
                std::vector<uint64_t> tl_microsecond_latencies[FLAGS_worker];
                for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
-                  farm.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
+                  dtree.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
                      running_threads_counter++;
                      // reserve tl_microsecond_latencies with lambda
                      uint64_t ops = 0;
@@ -347,9 +347,9 @@ int main(int argc, char* argv[]) {
                // -------------------------------------------------------------------------------------
                // Join Threads
                // -------------------------------------------------------------------------------------
-               farm.getWorkerPool().joinAll();
+               dtree.getWorkerPool().joinAll();
                // -------------------------------------------------------------------------------------
-               farm.stopProfiler();
+               dtree.stopProfiler();
                // -------------------------------------------------------------------------------------
 
                // if warmup continue
@@ -385,7 +385,7 @@ int main(int argc, char* argv[]) {
                   uint64_t samples_persist = (microsecond_latencies.size() > 1000) ? 1000 : microsecond_latencies.size();
                   
                   for (uint64_t s_i = 0; s_i < samples_persist; s_i++) {
-                     latency_file << farm.getNodeID() << "," << TYPE << "," << FLAGS_tag << "," << READ_RATIO << ","
+                     latency_file << dtree.getNodeID() << "," << TYPE << "," << FLAGS_tag << "," << READ_RATIO << ","
                                   << TARGET_TROUGHPUT << "," << YCSB_tuple_count << "," << ZIPF << "," << microsecond_latencies[s_i]
                                   << std::endl;
                   }
@@ -409,7 +409,7 @@ int main(int argc, char* argv[]) {
                   latency_file << "nodeId,workload,tag,ReadRatio,targetThroughput,YCSB_tuple_count,zipf,min,median,max,95th,99th,999th"
                                << std::endl;
                }
-               latency_file << farm.getNodeID() << "," << TYPE << "," << FLAGS_tag << "," << READ_RATIO << "," << TARGET_TROUGHPUT
+               latency_file << dtree.getNodeID() << "," << TYPE << "," << FLAGS_tag << "," << READ_RATIO << "," << TARGET_TROUGHPUT
                             << "," << YCSB_tuple_count << "," << ZIPF << "," << (microsecond_latencies[0]) << ","
                             << (microsecond_latencies[microsecond_latencies.size() / 2]) << "," << (microsecond_latencies.back()) << ","
                             << (microsecond_latencies[(int)(microsecond_latencies.size() * 0.95)]) << ","

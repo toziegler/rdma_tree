@@ -1,14 +1,14 @@
 #include "Defs.hpp"
 #include "PerfEvent.hpp"
-#include "farm/Compute.hpp"
-#include "farm/Config.hpp"
-#include "farm/Storage.hpp"
-#include "farm/db/onesidedBtree.hpp"
-#include "farm/profiling/ProfilingThread.hpp"
-#include "farm/profiling/counters/WorkerCounters.hpp"
-#include "farm/threads/Concurrency.hpp"
-#include "farm/utils/RandomGenerator.hpp"
-#include "farm/utils/Time.hpp"
+#include "dtree/Compute.hpp"
+#include "dtree/Config.hpp"
+#include "dtree/Storage.hpp"
+#include "dtree/db/onesidedBtree.hpp"
+#include "dtree/profiling/ProfilingThread.hpp"
+#include "dtree/profiling/counters/WorkerCounters.hpp"
+#include "dtree/threads/Concurrency.hpp"
+#include "dtree/utils/RandomGenerator.hpp"
+#include "dtree/utils/Time.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 // -------------------------------------------------------------------------------------
@@ -65,7 +65,7 @@ std::pair<Key, Key> equi_partition(uint64_t id, uint64_t participants, uint64_t 
 }
 
 //=== Profiling ===//
-struct ProfilingInfo : public farm::profiling::WorkloadInfo {
+struct ProfilingInfo : public dtree::profiling::WorkloadInfo {
    std::string experiment;
    uint64_t elements;
    uint64_t readRatio;
@@ -106,7 +106,7 @@ struct ProfilingInfo : public farm::profiling::WorkloadInfo {
 
 //=== Storage Logic ===//
 void storage_node() {
-   using namespace farm;
+   using namespace dtree;
    Storage store;
    profiling::EmptyWorkloadInfo wl;
    store.startProfiler(wl);
@@ -114,7 +114,7 @@ void storage_node() {
    {
       while (store.getConnectedClients() == 0)
          ;
-      [[maybe_unused]] farm::RemoteGuard rguard(store.getConnectedClients());
+      [[maybe_unused]] dtree::RemoteGuard rguard(store.getConnectedClients());
    }
    std::cout << "Stopped Profiler" << std::endl;
    store.stopProfiler();
@@ -122,8 +122,8 @@ void storage_node() {
 
 //=== Main ===//
 int main(int argc, char* argv[]) {
-   using namespace farm;
-   gflags::SetUsageMessage("FaRM Frontend");
+   using namespace dtree;
+   gflags::SetUsageMessage("Dtree Frontend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    //=== Node Partitions ===//
    std::string skew = (FLAGS_percentage_keys.empty()) ? "No skew" : FLAGS_percentage_keys;

@@ -1,10 +1,10 @@
 #include "PerfEvent.hpp"
-#include "farm/Config.hpp"
-#include "farm/Farm.hpp"
-#include "farm/rdma/CommunicationManager.hpp"
-#include "farm/utils/RandomGenerator.hpp"
-#include "farm/utils/ScrambledZipfGenerator.hpp"
-#include "farm/utils/Time.hpp"
+#include "dtree/Config.hpp"
+#include "dtree/Dtree.hpp"
+#include "dtree/rdma/CommunicationManager.hpp"
+#include "dtree/utils/RandomGenerator.hpp"
+#include "dtree/utils/ScrambledZipfGenerator.hpp"
+#include "dtree/utils/Time.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 // -------------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ struct Partition {
    uint64_t end;
 };
 // -------------------------------------------------------------------------------------
-struct YCSB_workloadInfo : public farm::profiling::WorkloadInfo {
+struct YCSB_workloadInfo : public dtree::profiling::WorkloadInfo {
  std::string experiment;
    uint64_t elements;
    uint64_t readRatio;
@@ -99,8 +99,8 @@ struct ycsb_t {
 // -------------------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-   using namespace farm;
-   std::cout << "FaRM-like YCSB benchmark" << std::endl;
+   using namespace dtree;
+   std::cout << "Dtree-like YCSB benchmark" << std::endl;
    // -------------------------------------------------------------------------------------
    gflags::SetUsageMessage("Catalog Test");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
@@ -131,7 +131,7 @@ int main(int argc, char* argv[])
       zipfs.push_back(FLAGS_YCSB_zipf_factor);
    }
    // -------------------------------------------------------------------------------------
-   FaRM db;
+   Dtree db;
    // -------------------------------------------------------------------------------------
    auto partition = [&](uint64_t id, uint64_t participants, uint64_t N) -> Partition {
       const uint64_t blockSize = N / participants;

@@ -47,7 +47,7 @@ rdma_libs = [
 rdma_dep = declare_dependency(dependencies: rdma_libs)
 
 # This triggers the builds of sources
-subdir('backend/farm')
+subdir('backend/dtree')
 subdir('frontend')
 
 project_deps = [
