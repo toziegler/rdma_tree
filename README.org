@@ -1,21 +1,10 @@
-* FaRM-like 
-Baseline for ScaleStore paper which implements a FaRM-like access pattern without txn properties but with latching:
-
-** Lock-Free Reads
-Lock free reads are implemented as described in the FaRM-paper, however since we only run YCSB and a single-object read, we skip the validation phase.
-Meaning that a lock-free rdma read succeeds if all versions are consistent.
-
-** Updates    
-For updates we first lock-free read to a thread local buffer and modify the value as described in the paper.
-However, then we merge lock, validate, replicate and update into a single RPC as in YCSB we only modify a single object and we use no replicas.
-It succeeds if the message handler can acquire the locks and if the version is still the same as from the initially read object.
+* (Modern) Designing Distributed RDMA B-Trees 
    
 ** Setup
 
 *** Cluster Setup
 All experiments were conducted on a 5-node cluster running Ubuntu 18.04.1 LTS, with Linux 4.15.0 kernel.
-Each node is equipped with two Intel(R) Xeon(R) Gold 5120 CPUs (14 cores), 512 GB main-memory split between both sockets, and four Samsung
-SSD 980 Pro M.2 1 TB connected via PCIe by one ASRock Hyper Quad M.2 PCIe card.
+Each node is equipped with two Intel(R) Xeon(R) Gold 5120 CPUs (14 cores), 512 GB main-memory split between both sockets.
 The nodes of the cluster are connected with an InfiniBand network using one Mellanox ConnectX-5 MT27800 NICs (InfiniBand EDR 4x, 100 Gbps) per node.
    
 *** Mellanox RDMA
@@ -76,20 +65,9 @@ ii  srptools                                      51mlnx1-1.51258               
 ii  ucx                                           1.9.0-1.51258                           amd64        Unified Communication X
 #+end_src
 
-*** SSD
-4x 512 GB main-memory split between both sockets, and four Samsung SSD 980 Pro M.2 1 TB connected via PCIe by one ASRock Hyper Quad M.2 PCIe card.
-All SSDs are used as block device and organized as a RAID 0 via 
-
-#+begin_src shell
-sudo mdadm --create /dev/md0 --auto md --level=0 --raid-devices=4 /dev/nvme0n1 /dev/nvme1n1 /dev/nvme2n1 /dev/nvme3n1
-#+end_src
-
-*** Memory Buffer
-Consistency checks ran with a minimum of 2GB, if it is smaller it might cause problems due to the ratio of free lists.
 
 *** Libraries 
 - gflags
-- lib_aio
 - ibverbs
 - tabulate
 - rdma cm
