@@ -100,6 +100,9 @@ struct Stack {
    bool full() { return size == (N); }
    uint64_t get_size() { return size; }
    void reset() { size = 0; }
+   void shuffle(){
+      std::random_shuffle(std::begin(buffer), std::end(buffer));
+   }
 
   private:
    uint64_t size = 0;

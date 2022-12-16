@@ -70,7 +70,7 @@ struct ExclusiveLatch : public AbstractLatch<T> {
       (super::version)++;
       // write back node
       super::local_copy->version = super::version;
-      my_thread::my().remote_write<onesided::MetadataPage>(super::remote_ptr, super::local_copy,
+      my_thread::my().remote_write<T>(super::remote_ptr, super::local_copy,
                                                            dtree::rdma::completion::unsignaled);
       my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, super::remote_ptr, dtree::rdma::completion::unsignaled);
       my_thread::my().nextCache();  // avoids that async unlatch overwrites our cache

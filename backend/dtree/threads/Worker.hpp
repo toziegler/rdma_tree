@@ -11,6 +11,7 @@
 #include "dtree/profiling/counters/WorkerCounters.hpp"
 #include "dtree/rdma/CommunicationManager.hpp"
 #include "dtree/rdma/messages/Messages.hpp"
+#include "dtree/utils/BatchQueue.hpp"
 #include "dtree/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 namespace dtree {
@@ -50,6 +51,12 @@ struct Worker {
    // -------------------------------------------------------------------------------------
    uintptr_t barrier;
    RemotePtr metadataPage;
+   struct RemoteCacheInfo {
+      RemotePtr counter;
+      uintptr_t begin_offset;
+   };
+   std::vector<RemoteCacheInfo> remote_caches;  // counter addr
+   utils::Stack<RemotePtr, TL_CACHE_SIZE> remote_pages;
    // -------------------------------------------------------------------------------------
    uint8_t* tl_rdma_buffer[2];
    uint64_t* cas_buffer[2];  // cache line sized
@@ -110,12 +117,14 @@ struct Worker {
       }
    }
 
-   onesided::PageHeader* read_latch(RemotePtr remote_ptr){
+   onesided::PageHeader* read_latch(RemotePtr remote_ptr) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-      // TODO read complete first cache line 
-      volatile onesided::PageHeader* remote_copy = reinterpret_cast<onesided::PageHeader*>(cas_buffer[current_position]);
-      rdma::postRead(const_cast<onesided::PageHeader*>(remote_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
+      // TODO read complete first cache line
+      volatile onesided::PageHeader* remote_copy =
+          reinterpret_cast<onesided::PageHeader*>(cas_buffer[current_position]);
+      rdma::postRead(const_cast<onesided::PageHeader*>(remote_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled,
+                     addr);
       int comp{0};
       ibv_wc wcReturn;
       while (comp == 0) {
@@ -125,14 +134,13 @@ struct Worker {
 
       return const_cast<onesided::PageHeader*>(remote_copy);
    }
-   
+
    template <typename T>
    T* remote_read(RemotePtr remote_ptr) {
       ensure(sizeof(T) <= THREAD_LOCAL_RDMA_BUFFER);
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
       volatile T* remote_copy = reinterpret_cast<T*>(tl_rdma_buffer[current_position]);
-
       rdma::postRead(const_cast<T*>(remote_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
       int comp{0};
       ibv_wc wcReturn;
@@ -140,8 +148,18 @@ struct Worker {
          comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
          if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
       }
-
       return const_cast<T*>(remote_copy);
+   }
+
+   void refresh_caches() {
+      uint64_t per_node_cache = TL_CACHE_SIZE / fLU64::FLAGS_storage_nodes;
+      for (size_t i = 0; i < FLAGS_storage_nodes; i++) {
+         auto begin_idx = fetchAdd(per_node_cache, remote_caches[i].counter, rdma::completion::signaled);
+         for (auto p_idx = begin_idx; p_idx < begin_idx + per_node_cache; p_idx++) {
+            RemotePtr addr(i, (p_idx * BTREE_NODE_SIZE) + remote_caches[i].begin_offset);
+            ensure(remote_pages.try_push(addr));
+         }
+      }
    }
 
    // returns old value; before increment

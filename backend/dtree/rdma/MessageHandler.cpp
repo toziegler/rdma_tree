@@ -97,6 +97,8 @@ void MessageHandler::init() {
       initServer->plOffset = (uintptr_t)cctx.request;
       initServer->nodeId = nodeId;
       initServer->barrierAddr = (uintptr_t)db.barrier;
+      initServer->remote_cache_counter = (uintptr_t)db.cache_counter;
+      initServer->remote_cache_offset = (uintptr_t)db.node_buffer;
       initServer->nodeId = nodeId;
       initServer->metadataOffset = (uintptr_t)db.md;
       initServer->threadId = 1000;

@@ -88,6 +88,7 @@ using s32 = int32_t;
 constexpr size_t BTREE_NODE_SIZE = 4096;
 constexpr size_t PADDING =8; // optimizes performance atomic   
 constexpr uint64_t THREAD_LOCAL_RDMA_BUFFER = BTREE_NODE_SIZE + PADDING; // 8kb
+constexpr uint64_t TL_CACHE_SIZE = 4; // 
 constexpr size_t CACHE_LINE = 64;
 constexpr size_t MAX_NODES = 64; // only supported due to bitmap
 constexpr size_t MAX_SCAN_RESULT = 100; // 100 rows
@@ -139,6 +140,10 @@ struct RemotePtr {
    friend bool operator<=(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset <= rhs.offset); }
    friend bool operator<(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset < rhs.offset); }
    friend bool operator>(const RemotePtr& lhs, const RemotePtr& rhs)  { return (lhs.offset > rhs.offset); }
+   friend std::ostream& operator<<(std::ostream& os , RemotePtr& rp ){
+      os << "Node id " << rp.getOwner() << " offset " << rp.plainOffset();
+      return os;
+   }
    // -------------------------------------------------------------------------------------
 };
 

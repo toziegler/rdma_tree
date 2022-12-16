@@ -75,8 +75,9 @@ class Storage
    }
    
    uint64_t* barrier;
+   uint64_t* cache_counter;
    onesided::MetadataPage* md;
-   
+   uint8_t *node_buffer {nullptr};
   private:
    NodeID nodeId = 0;
    twosided::BTree<Key,Value> tree;

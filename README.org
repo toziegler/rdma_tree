@@ -1,5 +1,6 @@
 * (Modern) Designing Distributed RDMA B-Trees 
-   
+** TODOs 
+
 ** Setup
 
 *** Cluster Setup
