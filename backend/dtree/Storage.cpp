@@ -11,6 +11,7 @@
 #include "Defs.hpp"
 #include "dtree/Config.hpp"
 #include "dtree/db/OneSidedBTree.hpp"
+#include "dtree/db/OneSidedTypes.hpp"
 // -------------------------------------------------------------------------------------
 namespace dtree {
 Storage::Storage() {
@@ -34,13 +35,20 @@ Storage::Storage() {
    uint64_t number_nodes =  static_cast<uint64_t>(((FLAGS_dramGB * 0.8) * 1024 * 1024 * 1024) / BTREE_NODE_SIZE );
    std::cout << "number nodes " << number_nodes << std::endl;
    node_buffer = (uint8_t*)cm->getGlobalBuffer().allocate(BTREE_NODE_SIZE * number_nodes, 64);
-   for(uint64_t b_i =0; b_i < BTREE_NODE_SIZE * number_nodes; b_i++){
-      if(node_buffer[b_i] != 0) throw;
+   // latch every node in this remote cache region (simplifies allocation)
+   auto* nodes = static_cast<onesided::BTreeLeaf<uint64_t, uint64_t>*>(static_cast<void*>(node_buffer));
+   for (size_t i = 0; i < number_nodes; i++) {
+     nodes[i].remote_latch = onesided::EXCLUSIVE_LOCKED;
    }
    auto iptr = reinterpret_cast<std::uintptr_t>(md);
    if ((iptr % 64) != 0) { throw std::runtime_error("not aligned"); }
    onesided::allocateInRDMARegion<onesided::MetadataPage>(md);
    ensure(md->type == onesided::PType_t::METADATA);
+   auto* root = static_cast<onesided::BTreeLeaf<Key, Value>*>(cm->getGlobalBuffer().allocate(BTREE_NODE_SIZE, 64));
+   onesided::allocateInRDMARegion<onesided::BTreeLeaf<Key, Value>>(root);
+   RemotePtr root_ptr (nodeId, (uintptr_t)root);
+   md->setRootPtr(root_ptr);
+   // create first root node 
    *barrier = 0;
    *cache_counter = 0; 
 }

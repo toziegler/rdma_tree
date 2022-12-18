@@ -1,8 +1,11 @@
 #pragma once
+#include <alloca.h>
 #include <sys/types.h>
 
 #include <cstdint>
+#include <iostream>
 #include <span>
+#include <stdexcept>
 
 #include "Defs.hpp"
 #include "ThreadContext.hpp"
@@ -13,6 +16,7 @@
 #include "dtree/rdma/messages/Messages.hpp"
 #include "dtree/utils/BatchQueue.hpp"
 #include "dtree/utils/RandomGenerator.hpp"
+#include "dtree/db/OneSidedTypes.hpp"
 // -------------------------------------------------------------------------------------
 namespace dtree {
 namespace threads {
@@ -58,10 +62,15 @@ struct Worker {
    std::vector<RemoteCacheInfo> remote_caches;  // counter addr
    utils::Stack<RemotePtr, TL_CACHE_SIZE> remote_pages;
    // -------------------------------------------------------------------------------------
-   uint8_t* tl_rdma_buffer[2];
-   uint64_t* cas_buffer[2];  // cache line sized
+   static constexpr size_t NUMBER_BUFFERS = 4;
+   
+   uint8_t* tl_rdma_buffer[NUMBER_BUFFERS];
+   uint64_t* cas_buffer[NUMBER_BUFFERS];  // cache line sized
    size_t current_position = 0;
-   void nextCache() { current_position = ((current_position + 1) % 2); }
+   void nextCache() { current_position = ((current_position + 1) % NUMBER_BUFFERS); }
+   uint8_t* get_current_buffer(){
+      return tl_rdma_buffer[current_position];
+   }
    // -------------------------------------------------------------------------------------
    Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>& cm, NodeID nodeId);
    ~Worker();
@@ -191,15 +200,16 @@ struct Worker {
    void compareSwapAsync(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc) {
       auto* old = reinterpret_cast<uint64_t*>(cas_buffer[current_position]);
       auto nodeId = remote_ptr.getOwner();
+      std::cout << "async cas to buffer" << current_position << std::endl;
       auto addr = remote_ptr.plainOffset();
       rdma::postCompareSwap(expected, desired, old, *(cctxs[nodeId].rctx), wc, addr);
    }
    // returns true if succeeded
    bool compareSwap(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc) {
       auto* old = reinterpret_cast<uint64_t*>(cas_buffer[current_position]);
+      std::cout << "cas to buffer" << current_position << std::endl;
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-
       rdma::postCompareSwap(expected, desired, old, *(cctxs[nodeId].rctx), wc, addr);
       int comp{0};
       ibv_wc wcReturn;
@@ -236,7 +246,6 @@ struct Worker {
             if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
          }
       }
-      std::cout << " barrier " << *barrier_value << " == " << expected << std::endl;
    }
 
    template <typename MSG>

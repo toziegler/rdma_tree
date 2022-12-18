@@ -149,7 +149,7 @@ struct RemotePtr {
 
 
 constexpr NodeID EMPTY_NODEID (~uint64_t(0));
-constexpr RemotePtr NULL_REMOTEPTR ((~uint8_t(0)), (~uint64_t(0)));
+static constexpr RemotePtr NULL_REMOTEPTR ((~uint8_t(0)), (~uint64_t(0)));
 constexpr uint64_t EMPTY_PVERSION ((~uint64_t(0)));
 constexpr uint64_t EMPTY_EPOCH ((~uint64_t(0)));
 static constexpr uint64_t MAX_TABLES = 10;
