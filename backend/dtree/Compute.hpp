@@ -1,26 +1,30 @@
 #pragma once
 // -------------------------------------------------------------------------------------
+#include "dtree/utils/RandomGenerator.hpp"
 #include "profiling/ProfilingThread.hpp"
 #include "profiling/counters/RDMACounters.hpp"
 #include "rdma/CommunicationManager.hpp"
 #include "rdma/MessageHandler.hpp"
 #include "threads/CoreManager.hpp"
 #include "threads/WorkerPool.hpp"
-#include "dtree/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <memory>
 
-namespace dtree
-{
+namespace dtree {
 
 // -------------------------------------------------------------------------------------
-class Compute
-{
+template <typename WorkerType>
+class Compute {
   public:
-   //! Default constructor
-   Compute();
-   //! Destructor
-   ~Compute();
+   Compute() {
+      cm = std::make_unique<rdma::CM<rdma::InitMessage>>();
+      rdmaCounters = std::make_unique<profiling::RDMACounters>();
+   }
+
+   ~Compute() {
+      stopProfiler();
+      workerPool.reset();  // important clients need to disconnect first
+   }
    // -------------------------------------------------------------------------------------
    // Deleted constructors
    //! Copy constructor
@@ -32,7 +36,7 @@ class Compute
    //! Move assignment operator
    Compute& operator=(Compute&& other) noexcept = delete;
    // -------------------------------------------------------------------------------------
-   threads::WorkerPool& getWorkerPool() { return *workerPool; }
+   threads::WorkerPool<WorkerType>& getWorkerPool() { return *workerPool; }
    // -------------------------------------------------------------------------------------
    rdma::CM<rdma::InitMessage>& getCM() { return *cm; }
    // -------------------------------------------------------------------------------------
@@ -43,29 +47,25 @@ class Compute
       profilingThread.emplace_back(&profiling::ProfilingThread::profile, &pt, nodeId, std::ref(wlInfo));
    }
    // -------------------------------------------------------------------------------------
-   void stopProfiler()
-   {
+   void stopProfiler() {
       if (pt.running == true) {
          pt.running = false;
-         for (auto& p : profilingThread)
-            p.join();
+         for (auto& p : profilingThread) p.join();
          profilingThread.clear();
       }
-      std::locale::global(std::locale("C")); // hack to restore locale which is messed up in tabulate package
+      std::locale::global(std::locale("C"));  // hack to restore locale which is messed up in tabulate package
    };
-      
+
    // -------------------------------------------------------------------------------------
-   void startAndConnect() {
-      workerPool = std::make_unique<threads::WorkerPool>(*cm, nodeId);
-   };
-   
+   void startAndConnect() { workerPool = std::make_unique<threads::WorkerPool<threads::Worker>>(*cm, nodeId); };
+
   private:
    NodeID nodeId = 0;
    std::unique_ptr<rdma::CM<rdma::InitMessage>> cm;
-   std::unique_ptr<threads::WorkerPool> workerPool;
+   std::unique_ptr<threads::WorkerPool<WorkerType>> workerPool;
    std::unique_ptr<profiling::RDMACounters> rdmaCounters;
    profiling::ProfilingThread pt;
    std::vector<std::thread> profilingThread;
 };
 // -------------------------------------------------------------------------------------
-}  // namespace scalestore
+}  // namespace dtree

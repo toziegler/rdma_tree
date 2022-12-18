@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -226,7 +227,7 @@ struct BTree {
        for (size_t repeat = 0;; repeat++) {
          try {
           // latch parent metadata page 
-            
+          throw std::logic_error("TODO to implement"); 
           // latch root
          } catch (const OLCRestartException&) {
          } 

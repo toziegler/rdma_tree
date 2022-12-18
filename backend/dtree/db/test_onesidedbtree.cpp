@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
       storage_node();
    } else {
       std::cout << "started compute node" << std::endl;
-      Compute comp;
+      Compute<threads::Worker> comp;
       comp.startAndConnect();
       //=== Barrier ===//
       uint64_t barrier_stage = 1;

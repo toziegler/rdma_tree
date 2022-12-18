@@ -6,6 +6,7 @@
 #include "dtree/profiling/ProfilingThread.hpp"
 #include "dtree/profiling/counters/WorkerCounters.hpp"
 #include "dtree/threads/Concurrency.hpp"
+#include "dtree/threads/Worker.hpp"
 #include "dtree/utils/RandomGenerator.hpp"
 #include "dtree/utils/Time.hpp"
 // -------------------------------------------------------------------------------------
@@ -150,7 +151,7 @@ int main(int argc, char* argv[]) {
       storage_node();
    } else {
       std::cout << "started compute node" << std::endl;
-      Compute comp;
+      Compute<threads::Worker> comp;
       comp.startAndConnect();
       //=== Barrier ===//
       uint64_t barrier_stage = 1;
