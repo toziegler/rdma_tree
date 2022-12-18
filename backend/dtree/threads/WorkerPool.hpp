@@ -45,7 +45,7 @@ class WorkerPool {
             pthread_setname_np(pthread_self(), threadName.c_str());
             // -------------------------------------------------------------------------------------
             workers[t_i] = new WorkerType(t_i, threadName, cm, nodeId);
-            Worker::tlsPtr = workers[t_i];
+            WorkerType::tlsPtr = workers[t_i];
             // -------------------------------------------------------------------------------------
             runningThreads++;
             auto& meta = workerThreadsMeta[t_i];

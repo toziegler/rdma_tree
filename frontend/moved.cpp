@@ -151,14 +151,14 @@ int main(int argc, char* argv[]) {
       storage_node();
    } else {
       std::cout << "started compute node" << std::endl;
-      Compute<threads::Worker> comp;
+      Compute<threads::twosided::Worker> comp;
       comp.startAndConnect();
       //=== Barrier ===//
       uint64_t barrier_stage = 1;
       auto barrier_wait = [&]() {
          for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
             comp.getWorkerPool().scheduleJobAsync(
-                t_i, [&, t_i]() { threads::Worker::my().rdma_barrier_wait(barrier_stage); });
+                t_i, [&, t_i]() { threads::twosided::Worker::my().rdma_barrier_wait(barrier_stage); });
          }
          comp.getWorkerPool().joinAll();
          barrier_stage++;
@@ -175,8 +175,8 @@ int main(int argc, char* argv[]) {
             for (Key k = begin; k < end; ++k) {
                auto p_id = get_partition(k);
                Value v = k;
-               threads::Worker::my().insert(p_id, k, v);
-               threads::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+               threads::twosided::Worker::my().insert(p_id, k, v);
+               threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
             }
          });
       }
@@ -191,7 +191,7 @@ int main(int argc, char* argv[]) {
       for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
          comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
             running_threads_counter++;
-            for (; keep_running; threads::Worker::my().counters.incr(profiling::WorkerCounters::tx_p)) {
+            for (; keep_running; threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p)) {
                //=== Scan ===//
                if (FLAGS_scans) {
                   // pick partition and choose X values within
@@ -199,7 +199,7 @@ int main(int argc, char* argv[]) {
                   auto pp = partition_map[utils::RandomGenerator::getRandU64(0, partition_map.size())];  // pair
                   auto expected_values = static_cast<uint64_t>((double)(pp.second - pp.first) * FLAGS_scan_selectivity);
                   auto start = utils::RandomGenerator::getRandU64(pp.first, pp.second - expected_values);
-                  auto kv_span = threads::Worker::my().scan(0, start, start + expected_values);
+                  auto kv_span = threads::twosided::Worker::my().scan(0, start, start + expected_values);
                   if (kv_span.empty()) throw std::logic_error("empty span");
                   for (const auto& kv : kv_span) {
                      if (kv.key != start)
@@ -207,7 +207,7 @@ int main(int argc, char* argv[]) {
                                                std::to_string(start));
                      start++;
                   }
-                  threads::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
+                  threads::twosided::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
                                                          utils::getTimePoint() - begin);
                   continue;
                }
@@ -217,14 +217,14 @@ int main(int argc, char* argv[]) {
                auto p_id = get_partition(key);
                if (FLAGS_read_ratio == 100 || utils::RandomGenerator::getRandU64(0, 100) < FLAGS_read_ratio) {
                   Value rValue{0};
-                  auto found = threads::Worker::my().lookup(p_id, key, rValue);
+                  auto found = threads::twosided::Worker::my().lookup(p_id, key, rValue);
                   if (!found) throw std::logic_error("key not found");
                } else {
                   Value value = utils::RandomGenerator::getRandU64Fast();
-                  auto success = threads::Worker::my().insert(p_id, key, value);
+                  auto success = threads::twosided::Worker::my().insert(p_id, key, value);
                   if (!success) throw std::logic_error("key not found");
                }
-               threads::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
+               threads::twosided::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
                                                       utils::getTimePoint() - begin);
             }
             running_threads_counter--;

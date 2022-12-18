@@ -2,6 +2,7 @@
 // -------------------------------------------------------------------------------------
 namespace dtree {
 namespace threads {
+namespace twosided {
 // -------------------------------------------------------------------------------------
 thread_local Worker* Worker::tlsPtr = nullptr;
 // -------------------------------------------------------------------------------------
@@ -14,11 +15,7 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
       cctxs(FLAGS_storage_nodes),
       threadContext(std::make_unique<ThreadContext>()) {
    ThreadContext::tlsPtr = threadContext.get();
-   for (size_t i = 0; i < NUMBER_BUFFERS; i++) {
-      tl_rdma_buffer[i] = (uint8_t*)cm.getGlobalBuffer().allocate(THREAD_LOCAL_RDMA_BUFFER, 64);
-      cas_buffer[i] = (uint64_t*)cm.getGlobalBuffer().allocate(64, 64);  // must have more space than latch
-   }
-   remote_caches.resize(FLAGS_storage_nodes);
+   barrier_buffer = (uint64_t*)cm.getGlobalBuffer().allocate(64, 64);
    // -------------------------------------------------------------------------------------
    // Connection to MessageHandler
    // -------------------------------------------------------------------------------------
@@ -53,8 +50,8 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
       cctxs[n_i].mbOffset = (reinterpret_cast<rdma::InitMessage*>((cctxs[n_i].rctx->applicationData)))->mbOffset;
       ensure((reinterpret_cast<rdma::InitMessage*>((cctxs[n_i].rctx->applicationData)))->nodeId == n_i);
       auto& msg = *reinterpret_cast<InitMessage*>((cctxs[n_i].rctx->applicationData));
-      remote_caches[n_i] = {.counter = RemotePtr(n_i, msg.remote_cache_counter),
-                            .begin_offset = msg.remote_cache_offset};
+      //remote_caches[n_i] = {.counter = RemotePtr(n_i, msg.remote_cache_counter),
+                            //.begin_offset = msg.remote_cache_offset};
       if (msg.nodeId == 0) {
          barrier = msg.barrierAddr;
          metadataPage = RemotePtr(msg.nodeId, msg.metadataOffset);
@@ -75,5 +72,6 @@ Worker::~Worker() {
    }
 }
 // -------------------------------------------------------------------------------------
+}  // namespace twosided
 }  // namespace threads
 }  // namespace dtree

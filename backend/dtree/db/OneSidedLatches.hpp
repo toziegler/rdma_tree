@@ -7,7 +7,7 @@ namespace onesided {
 template <ConceptObject T>
 struct OptimisticLatch : public AbstractLatch<T> {
    using super = AbstractLatch<T>;
-   using my_thread = dtree::threads::Worker;
+   using my_thread = dtree::threads::twosided::Worker;
 
    explicit OptimisticLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
    // because RDMA read atomi w.r.t. to a cache line as per the x68 intel guide
@@ -40,7 +40,7 @@ struct ExclusiveLatch : public AbstractLatch<T> {
    explicit ExclusiveLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
    // returns true successfully
    using super = AbstractLatch<T>;
-   using my_thread = dtree::threads::Worker;
+   using my_thread = dtree::threads::twosided::Worker;
 
    explicit ExclusiveLatch(OptimisticLatch<T>&& optmisticLatch) {
       // upgrade logic
@@ -104,7 +104,7 @@ struct AllocationLatch : public AbstractLatch<T> {
    }
    // returns true successfully
    using super = AbstractLatch<T>;
-   using my_thread = dtree::threads::Worker;
+   using my_thread = dtree::threads::twosided::Worker;
 
    void unlatch() {
       ensure(super::latched);

@@ -57,7 +57,7 @@ class Compute {
    };
 
    // -------------------------------------------------------------------------------------
-   void startAndConnect() { workerPool = std::make_unique<threads::WorkerPool<threads::Worker>>(*cm, nodeId); };
+   void startAndConnect() { workerPool = std::make_unique<threads::WorkerPool<WorkerType>>(*cm, nodeId); };
 
   private:
    NodeID nodeId = 0;
