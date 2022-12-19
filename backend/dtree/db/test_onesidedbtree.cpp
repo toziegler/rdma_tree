@@ -57,14 +57,14 @@ int main(int argc, char* argv[]) {
       storage_node();
    } else {
       std::cout << "started compute node" << std::endl;
-      Compute<threads::twosided::Worker> comp;
+      Compute<threads::onesided::Worker> comp;
       comp.startAndConnect();
       //=== Barrier ===//
       uint64_t barrier_stage = 1;
       auto barrier_wait = [&]() {
          for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
             comp.getWorkerPool().scheduleJobAsync(
-                t_i, [&, t_i]() { threads::twosided::Worker::my().rdma_barrier_wait(barrier_stage); });
+                t_i, [&, t_i]() { threads::onesided::Worker::my().rdma_barrier_wait(barrier_stage); });
          }
          comp.getWorkerPool().joinAll();
          barrier_stage++;
@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
                   std::cout << leaf2.latch.local_copy << " " <<  latch_to_fail.latch.local_copy << std::endl;;
                   leaf2->update(rnd_idx, value);
                   page_updates++;
-                  threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+                  threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
                   /*onesided::GuardO<Leaf> leafO(rptr_page);
                   auto idx = leafO->lower_bound(rnd_idx);
                   if (idx == leafO->end() && leafO->key_at(idx) != rnd_idx)
@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
                   onesided::GuardX<Leaf> leaf2(std::move(leafO)); 
                   leaf2->update(rnd_idx, value);
                   page_updates++;
-                  threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);*/
+                  ffreads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);*/
                } catch (const onesided::OLCRestartException&) {
                   latch_contentions++;
                }

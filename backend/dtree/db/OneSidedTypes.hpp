@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Defs.hpp"
+namespace dtree {
 namespace onesided {
 
 static constexpr uint64_t EXCLUSIVE_LOCKED = 0x1000000000000000;
@@ -38,8 +39,8 @@ enum class PType_t : uint8_t {
 // therefore pay attention at alloc;
 constexpr size_t BUFFER_SIZE = 15;
 struct PageHeader {
-   PageHeader(PType_t page_type) : type(page_type) { 
-      //ensure(((uintptr_t)this & 63) == 0);
+   PageHeader(PType_t page_type) : type(page_type) {
+      // ensure(((uintptr_t)this & 63) == 0);
    }
    uint64_t remote_latch{0};
    uint64_t version{0};
@@ -74,20 +75,11 @@ void allocateInRDMARegion(T* ptr, Params&&... params) {
    new (ptr) T(std::forward<Params>(params)...);
 }
 
-template <typename T>
-concept ConceptObject = std::is_base_of<PageHeader, T>::value;
-template <ConceptObject T>
-struct AbstractLatch {
-   RemotePtr remote_ptr{0,0};
-   Version version{0};
-   bool latched {false};
-   T* local_copy {nullptr};
-   explicit AbstractLatch(RemotePtr remote_address) : remote_ptr(remote_address) {}
-   AbstractLatch(){};
-   bool isLatched(){
-      return latched;
-   }
+// this is used by the onesided;:worker
+struct RDMAMemoryInfo {
+   PageHeader* local_copy;  // used for latchable objects, e.g, B-tree nodes. Thus space is much larger than pageheader 
+   PageHeader* latch_buffer;
 };
 
-
 }  // namespace onesided
+}  // namespace dtree

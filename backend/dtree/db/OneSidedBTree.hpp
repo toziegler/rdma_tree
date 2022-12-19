@@ -18,6 +18,7 @@
 #include "OneSidedTypes.hpp"
 //=== One-sided B-Tree ===//
 
+namespace dtree {
 namespace onesided {
 
 using Pos = uint64_t;
@@ -238,3 +239,4 @@ struct BTree {
     // scan
 };
 }  // namespace onesided
+}  // namespace dtree

@@ -95,6 +95,7 @@ constexpr size_t MAX_SCAN_RESULT = 100; // 100 rows
 constexpr size_t PARTITIONS = 64;  // partitions for partitioned queue 
 constexpr size_t BATCH_SIZE = 128; // for partitioned queue 
 constexpr bool USE_BACKOFF = true;
+constexpr size_t CONCURRENT_LATCHES = 8; // every worker can hold that many latches at the SAME time 
 
 constexpr auto ACTIVE_LOG_LEVEL = LOG_LEVEL::RELEASE;
 // -------------------------------------------------------------------------------------
