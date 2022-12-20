@@ -73,14 +73,17 @@ int main(int argc, char* argv[]) {
                ph2.unlatch();
             }
             std::cout << "Allocation done " << std::endl;
-            try {
-               onesided::GuardO<Leaf> o_guard(test_ptr);
-               // now force version mistmatch?
-               onesided::GuardX<Leaf> x_guard2(std::move(o_guard));  // should not make allocation since we move
-               ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 1);
-            } catch (const onesided::OLCRestartException&) {
-               ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
-               std::cout << "Exception catched " << std::endl;
+            for (uint64_t p_i = 0; p_i < 100; p_i++) {
+               try {
+                  onesided::GuardX<Leaf> o_guard(test_ptr);
+                  // now force version mistmatch?
+                  std::cout << "version" << o_guard->version << std::endl;
+                  std::cout << "version" << o_guard.latch.version << std::endl;
+                  ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 1);
+               } catch (const onesided::OLCRestartException&) {
+                  ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
+                  std::cout << "Exception catched " << std::endl;
+               }
             }
          }  // destructor
          std::cout << "concurrent latches memory " << threads::onesided::Worker::my().local_rmemory.get_size()
