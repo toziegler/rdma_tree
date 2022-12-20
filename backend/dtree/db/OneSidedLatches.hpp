@@ -15,12 +15,12 @@ struct AbstractLatch {
    bool moved{false};
    RDMAMemoryInfo rdma_mem;  // local rdma memory
    explicit AbstractLatch(RemotePtr remote_address) : remote_ptr(remote_address) {
-      std::cout << "Constructor AbstractLatch" << std::endl;
+      // std::cout << "Constructor AbstractLatch" << std::endl;
       auto success = threads::onesided::Worker::my().local_rmemory.try_pop(rdma_mem);
       if (!success) throw std::runtime_error("Maximum latch depth reached");
    }
    AbstractLatch& operator=(AbstractLatch&& other) {
-      std::cout << "move assingment" << std::endl;
+      // std::cout << "move assingment" << std::endl;
       ensure(!moved);
       ensure(!other.moved);
       other.moved = true;
@@ -33,7 +33,7 @@ struct AbstractLatch {
       return *this;
    }
    explicit AbstractLatch(AbstractLatch&& other) {
-      std::cout << "Moved constructor" << std::endl;
+      // std::cout << "Moved constructor" << std::endl;
       ensure(!moved);
       ensure(!other.moved);
       other.moved = true;
@@ -49,11 +49,10 @@ struct AbstractLatch {
 
    ~AbstractLatch() {
       if (!moved) {
-         std::cout << "Destructor AbstractLatch" << std::endl;
-         // return memory
+         //  return memory
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(rdma_mem);
       } else {
-         std::cout << "Moved Destructor " << std::endl;
+         // std::cout << "Moved Destructor " << std::endl;
       }
    }
 };
@@ -63,20 +62,22 @@ template <ConceptObject T>
 struct OptimisticLatch : public AbstractLatch<T> {
    using super = AbstractLatch<T>;
    using my_thread = dtree::threads::onesided::Worker;
-
    explicit OptimisticLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {
-      std::cout << "OptimisticLatch  Constructor" << std::endl;
+      // std::cout << "OptimisticLatch  Constructor" << std::endl;
    }
    explicit OptimisticLatch(OptimisticLatch&& o_other) : AbstractLatch<T>(std::move(o_other)) {
-      std::cout << "OptimisticLatch Move Constructor" << std::endl;
+      // std::cout << "OptimisticLatch Move Constructor" << std::endl;
    }
-   OptimisticLatch& operator=(OptimisticLatch&& other){
+   ~OptimisticLatch() {
+      if (!super::moved) std::cout << "OptimisticLatch destructor" << std::endl;
+   }
+   OptimisticLatch& operator=(OptimisticLatch&& other) {
       *static_cast<AbstractLatch<T>*>(this) = std::move(*static_cast<AbstractLatch<T>*>(&other));
       return *this;
-   } 
+   }
 
    OptimisticLatch& operator=(OptimisticLatch& other) = delete;
-   OptimisticLatch(OptimisticLatch& other) = delete;   // copy constructor
+   OptimisticLatch(OptimisticLatch& other) = delete;  // copy constructor
    // because RDMA read atomi w.r.t. to a cache line as per the x68 intel guide
    bool try_latch() {
       ensure(super::remote_ptr != NULL_REMOTEPTR);
@@ -86,7 +87,7 @@ struct OptimisticLatch : public AbstractLatch<T> {
       super::version = ph->version;
       // Since CL are read consistent we can use the below shortcut
       if constexpr (sizeof(T) <= 32) {
-         super::local_copy = static_cast<T*>(ph);
+         super::rdma_mem.local_copy = static_cast<T*>(ph);
       } else {
          my_thread::my().remote_read<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy));
          if (super::version != super::rdma_mem.local_copy->version) return false;
@@ -108,17 +109,18 @@ struct ExclusiveLatch : public AbstractLatch<T> {
    using my_thread = dtree::threads::onesided::Worker;
    explicit ExclusiveLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
    explicit ExclusiveLatch(OptimisticLatch<T>&& o_other) : AbstractLatch<T>(std::move(o_other)) {
-      std::cout << "moved (update) constructor latch" << std::endl;
+      // std::cout << "moved (update) constructor latch" << std::endl;
    }
    // delete constuctors we do not want
    ExclusiveLatch& operator=(ExclusiveLatch& other) = delete;
    ExclusiveLatch(ExclusiveLatch& other) = delete;   // copy constructor
    ExclusiveLatch(ExclusiveLatch&& other) = delete;  // move constructor
+   bool version_mismatch{false};
 
    ExclusiveLatch& operator=(ExclusiveLatch&& other) {
       *static_cast<AbstractLatch<T>*>(this) = std::move(*static_cast<AbstractLatch<T>*>(&other));
       return *this;
-   } 
+   }
    bool try_latch() {
       ensure(super::remote_ptr != NULL_REMOTEPTR);
       my_thread::my().compareSwapAsync(UNLOCKED, EXCLUSIVE_LOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
@@ -135,15 +137,25 @@ struct ExclusiveLatch : public AbstractLatch<T> {
    // Attention this does leave lock in invalid state and must be called from the GuardX move constructor
    bool try_latch(Version version) {
       ensure(super::remote_ptr != NULL_REMOTEPTR);
+      ensure(!super::latched);
       auto latched_ =
           my_thread::my().compareSwap(UNLOCKED, EXCLUSIVE_LOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
                                       &super::rdma_mem.latch_buffer->remote_latch);
-      if (!latched_) return false;
+      if (!latched_) { return false; }
       super::latched = true;  // important for unlatch
+      // todo check if this could be ab bug since we write back our old state in the unlatch although we have the wrong
+      // version
       my_thread::my().read_latch(super::remote_ptr, super::rdma_mem.latch_buffer);
       auto* ph = static_cast<PageHeader*>(static_cast<void*>(super::rdma_mem.latch_buffer));
-      if (ph->version != version) return false;
+      ensure(ph->remote_latch == EXCLUSIVE_LOCKED);
+      if (ph->version != version) {
+         version_mismatch = true;
+         return false;
+      }
+      // upgrade header of read data
       super::version = ph->version;
+      // now we upgrade the old header with the new one
+      *super::rdma_mem.local_copy = *ph;
       return latched_;
    }
 
@@ -151,15 +163,18 @@ struct ExclusiveLatch : public AbstractLatch<T> {
       // unlatch increments thread local buffer to avoid memory corruption
       ensure(super::latched);
       // increment version
-      (super::version)++;
-      // write back node
-      super::rdma_mem.local_copy->version = super::version;
-      my_thread::my().remote_write<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy),
-                                      dtree::rdma::completion::unsignaled);
-      // unsignaled could improve the performance but the memory management gets annoying as memory used for async. op
+      if (!version_mismatch) {
+         (super::version)++;
+         super::rdma_mem.local_copy->version = super::version;
+         ensure(static_cast<T*>(super::rdma_mem.local_copy)->remote_latch == EXCLUSIVE_LOCKED);
+         my_thread::my().remote_write<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy),
+                                         dtree::rdma::completion::signaled);
+      }  // unsignaled could improve the performance but the memory management gets annoying as memory used for async.
+         // op
       // should not be returned in destructor before the completion finished
-      my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
-                                  &super::rdma_mem.latch_buffer->remote_latch);
+      ensure(my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, super::remote_ptr,
+                                         dtree::rdma::completion::signaled,
+                                         &super::rdma_mem.latch_buffer->remote_latch));
       super::latched = false;
    };
 };
@@ -185,12 +200,17 @@ struct AllocationLatch : public AbstractLatch<T> {
       (super::version)++;
       // write back node
       super::rdma_mem.local_copy->version = super::version;
+      // todo unsignaled
       my_thread::my().remote_write<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy),
-                                      dtree::rdma::completion::unsignaled);
+                                      dtree::rdma::completion::signaled);
       my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
                                   &super::rdma_mem.latch_buffer->remote_latch);
       super::latched = false;
    };
+   T* operator->() {
+      ensure(super::latched);
+      return static_cast<T*>(super::rdma_mem.local_copy);
+   }
 };
 
 template <typename T>
@@ -223,7 +243,7 @@ struct GuardO {
 
    // move assignment operator
    GuardO& operator=(GuardO&& other) {
-      std::cout << "GuardO move assignment " << std::endl;
+      // std::cout << "GuardO move assignment " << std::endl;
       if (!moved) checkVersionAndRestart();
       // here we need to return the memory of our current latch
       [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
@@ -247,13 +267,12 @@ struct GuardO {
 
    // destructor
    ~GuardO() noexcept(false) {
-      if (!moved) checkVersionAndRestart();
-      else std::cout << "GuardO Destructor Moved" << std::endl;
+      if (!moved) { checkVersionAndRestart(); }
    }
 
    T* operator->() {
       ensure(!moved);
-      return latch.local_copy;
+      return static_cast<T*>(latch.rdma_mem.local_copy);
    }
 };
 
@@ -273,8 +292,15 @@ struct GuardX {
    explicit GuardX(GuardO<T>&& other) : latch(std::move(other.latch)) {
       ensure(latch.remote_ptr == other.latch.remote_ptr);
       ensure(latch.latched == false);
+      ensure(other.latch.moved);
       other.moved = true;
-      if (!latch.try_latch(latch.version)) { throw OLCRestartException(); }
+      ensure(!moved);
+      ensure(!latch.latched);
+      if (!latch.try_latch(latch.version)) {
+         if (latch.latched) latch.unlatch();  // need to call unlatch since destructor is not called here
+         throw OLCRestartException();
+      }
+      ensure(!moved);
    }
 
    // assignment operator
@@ -291,6 +317,7 @@ struct GuardX {
       }
       latch = std::move(other.latch);  // calls move assignment
       other.moved = true;
+      ensure(!moved);
       return *this;
    }
 
@@ -302,7 +329,7 @@ struct GuardX {
 
    T* operator->() {
       ensure(!moved);
-      return latch.local_copy;
+      return static_cast<T*>(latch.rdma_mem.local_copy);
    }
 
    void release() {

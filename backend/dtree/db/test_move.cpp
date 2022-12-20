@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
    using namespace dtree;
    gflags::SetUsageMessage("Dtree Frontend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-      using Leaf = onesided::BTreeLeaf<Key, Value>;
+   using Leaf = onesided::BTreeLeaf<Key, Value>;
    if (FLAGS_storage_node) {
       std::cout << "started storage node "
                 << "\n";
@@ -59,6 +59,7 @@ int main(int argc, char* argv[]) {
       std::cout << "started compute node" << std::endl;
       Compute<threads::onesided::Worker> comp;
       comp.startAndConnect();
+      // exclusive test section
       comp.getWorkerPool().scheduleJobSync(0, [&]() {
          {
             RemotePtr test_ptr;
@@ -71,39 +72,19 @@ int main(int argc, char* argv[]) {
                test_ptr2 = ph2.remote_ptr;
                ph2.unlatch();
             }
-            onesided::GuardO<Leaf> o_guard(test_ptr);
-            onesided::GuardO<Leaf> o_guard2(std::move(o_guard)); // should not make allocation since we move 
-            onesided::GuardO<Leaf> o_guard3(test_ptr2); // this should allocate though 
-            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 2);
-            o_guard2 = std::move(o_guard3); // this should not allocate here we ensure that o_guard returns the previous allocated memory   
-            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 1);
-         }  // destructor
-         std::cout << " [Optmistic Test]concurrent latches memory " <<   threads::onesided::Worker::my().local_rmemory.get_size() << std::endl;
-         ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
-      });
-      // exclusive test section 
-      comp.getWorkerPool().scheduleJobSync(0, [&]() {
-         {
-            RemotePtr test_ptr;
-            RemotePtr test_ptr2;
-            {
-               onesided::AllocationLatch<Leaf> ph;
-               test_ptr = ph.remote_ptr;
-               ph.unlatch();
-               onesided::AllocationLatch<Leaf> ph2;
-               test_ptr2 = ph2.remote_ptr;
-               ph2.unlatch();
+            std::cout << "Allocation done " << std::endl;
+            try {
+               onesided::GuardO<Leaf> o_guard(test_ptr);
+               // now force version mistmatch?
+               onesided::GuardX<Leaf> x_guard2(std::move(o_guard));  // should not make allocation since we move
+               ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 1);
+            } catch (const onesided::OLCRestartException&) {
+               ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
+               std::cout << "Exception catched " << std::endl;
             }
-            onesided::GuardX<Leaf> x_guard(test_ptr);
-            onesided::GuardX<Leaf> x_guard2(test_ptr2); // should not make allocation since we move 
-            x_guard2 = std::move(x_guard);
-            //onesided::GuardX<Leaf> x_guard2(test_ptr); // should not make allocation since we move 
-            //onesided::GuardO<Leaf> o_guard3(test_ptr2); // this should allocate though 
-            //ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 2);
-            //o_guard2 = std::move(o_guard3); // this should not allocate here we ensure that o_guard returns the previous allocated memory   
-            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES - 1);
          }  // destructor
-         std::cout << "concurrent latches memory " <<   threads::onesided::Worker::my().local_rmemory.get_size() << std::endl;
+         std::cout << "concurrent latches memory " << threads::onesided::Worker::my().local_rmemory.get_size()
+                   << std::endl;
          ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
       });
    }

@@ -75,11 +75,11 @@ int main(int argc, char* argv[]) {
       std::vector<RemotePtr> remote_ht;
       using Leaf = onesided::BTreeLeaf<Key, Value>;
       comp.getWorkerPool().scheduleJobSync(0, [&]() {
-         for (size_t i = 0; i < 1000; i++) {
+         for (size_t i = 0; i < 100; i++) {
             onesided::AllocationLatch<Leaf> leaf;
             remote_ht_mtx.lock();
             ensure(i == remote_ht.size());
-            leaf.local_copy->insert(i, 0);  // initialize index
+            leaf->insert(i, 0);  // initialize index
             leaf.unlatch();
             remote_ht.push_back(leaf.remote_ptr);
             remote_ht_mtx.unlock();
@@ -102,35 +102,18 @@ int main(int argc, char* argv[]) {
                auto rptr_page = remote_ht[rnd_idx];
                try {
                   // test move constructor 
-
-               std::cout << "" << std::endl;
-               std::cout << "begin" << std::endl;
                   onesided::GuardO<Leaf> leafO(rptr_page);
                   auto idx = leafO->lower_bound(rnd_idx);
                   if (idx == leafO->end() && leafO->key_at(idx) != rnd_idx)
                      throw std::logic_error("key  + std::to_string(rnd_idx)");
                   Value value = leafO->value_at(idx) + 1;
-                  onesided::GuardX<Leaf> latch_to_fail(rptr_page); 
-                  ensure(latch_to_fail.latch.latched);
-
-                  std::cout << "latch fail " <<  latch_to_fail.latch.local_copy << "  " << std::endl;;
                   onesided::GuardX<Leaf> leaf2(std::move(leafO)); 
-                  ensure(leaf2.latch.local_copy != latch_to_fail.latch.local_copy);
-                  std::cout << leaf2.latch.local_copy << " " <<  latch_to_fail.latch.local_copy << std::endl;;
                   leaf2->update(rnd_idx, value);
                   page_updates++;
                   threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
-                  /*onesided::GuardO<Leaf> leafO(rptr_page);
-                  auto idx = leafO->lower_bound(rnd_idx);
-                  if (idx == leafO->end() && leafO->key_at(idx) != rnd_idx)
-                     throw std::logic_error("key  + std::to_string(rnd_idx)");
-                  Value value = leafO->value_at(idx) + 1;
-                  onesided::GuardX<Leaf> leaf2(std::move(leafO)); 
-                  leaf2->update(rnd_idx, value);
-                  page_updates++;
-                  ffreads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);*/
                } catch (const onesided::OLCRestartException&) {
                   latch_contentions++;
+                  ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
                }
             }
             running_threads_counter--;
@@ -147,15 +130,13 @@ int main(int argc, char* argv[]) {
          uint64_t current_idx = 0;
          uint64_t sum = 0;
          std::for_each(std::begin(remote_ht), std::end(remote_ht), [&](RemotePtr rptr) {
-            onesided::ExclusiveLatch<Leaf> leaf(rptr);
-            if (!leaf.try_latch()) throw std::logic_error("should not be latched");
-            auto idx = leaf.local_copy->lower_bound(current_idx);
-            if (idx == leaf.local_copy->end() && leaf.local_copy->key_at(idx) != current_idx)
+            onesided::GuardX<Leaf> leaf(rptr);
+            auto idx = leaf->lower_bound(current_idx);
+            if (idx == leaf->end() && leaf->key_at(idx) != current_idx)
                throw std::logic_error("key not found");
-            Value value = leaf.local_copy->value_at(idx);
+            Value value = leaf->value_at(idx);
             sum += value;
             current_idx++;
-            leaf.unlatch();
          });
          std::cout << "sum " << sum << " updates " << page_updates << std::endl;
          std::cout << "latch_contentions " << latch_contentions << std::endl;

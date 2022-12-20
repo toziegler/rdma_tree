@@ -8,6 +8,6 @@ project_sources += files(
 )
 project_mains += files(
   'test_move.cpp',
-  #'test_onesidedbtree.cpp'
+  'test_onesidedbtree.cpp'
 ) 
 
