@@ -46,7 +46,6 @@ struct AbstractLatch {
 
    ~AbstractLatch() {
       if (!moved) {
-         //  return memory
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(rdma_mem);
       } else {
          // std::cout << "Moved Destructor " << std::endl;
@@ -148,6 +147,9 @@ struct ExclusiveLatch : public AbstractLatch<T> {
       this->version = ph->version;
       // now we upgrade the old header with the new one
       *this->rdma_mem.local_copy = *ph;
+      ensure(this->rdma_mem.local_copy->remote_latch == ph->remote_latch);
+      ensure(this->rdma_mem.local_copy->version == ph->versio);
+
       return latched_;
    }
 
@@ -238,9 +240,11 @@ struct GuardO {
    // move assignment operator
    GuardO& operator=(GuardO&& other) {
       // std::cout << "GuardO move assignment " << std::endl;
-      if (!moved) checkVersionAndRestart();
-      // here we need to return the memory of our current latch
-      [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
+      if (!moved) {
+         checkVersionAndRestart();
+      // here we need to return the memory of our current latch if we did not move 
+         [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
+      }
       latch.moved = false;
       moved = false;
       latch = std::move(other.latch);  // calls move assignment

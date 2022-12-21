@@ -89,6 +89,7 @@ int main(int argc, char* argv[]) {
             usleep(250);
             tree.insert(k_i, k_i);
             std::cout << "ki " << k_i << std::endl;
+            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
          }
       });
       std::cout << "BEFORE BARRIER " << std::endl;
