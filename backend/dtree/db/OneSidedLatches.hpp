@@ -50,6 +50,8 @@ struct AbstractLatch {
    ~AbstractLatch() {
       if (!moved) {
          //  return memory
+          std::cout << "AbstractLatch Destructor " << std::endl;
+          std::memset((void*)rdma_mem.local_copy, 0, 4096);
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(rdma_mem);
       } else {
          // std::cout << "Moved Destructor " << std::endl;
@@ -68,7 +70,9 @@ struct OptimisticLatch : public AbstractLatch<T> {
    explicit OptimisticLatch(OptimisticLatch&& o_other) : AbstractLatch<T>(std::move(o_other)) {
       // std::cout << "OptimisticLatch Move Constructor" << std::endl;
    }
-
+   ~OptimisticLatch() {
+      if (!super::moved) std::cout << "OptimisticLatch destructor" << std::endl;
+   }
    OptimisticLatch& operator=(OptimisticLatch&& other) {
       *static_cast<AbstractLatch<T>*>(this) = std::move(*static_cast<AbstractLatch<T>*>(&other));
       return *this;
@@ -103,6 +107,7 @@ struct OptimisticLatch : public AbstractLatch<T> {
 template <ConceptObject T>
 struct ExclusiveLatch : public AbstractLatch<T> {
    // returns true successfully
+   using super = AbstractLatch<T>;
    using my_thread = dtree::threads::onesided::Worker;
    explicit ExclusiveLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
    explicit ExclusiveLatch(OptimisticLatch<T>&& o_other) : AbstractLatch<T>(std::move(o_other)) {
@@ -119,65 +124,78 @@ struct ExclusiveLatch : public AbstractLatch<T> {
       return *this;
    }
    bool try_latch() {
+<<<<<<< HEAD
+      this->version = 0;
       ensure(this->remote_ptr != NULL_REMOTEPTR);
+      
       my_thread::my().compareSwapAsync(UNLOCKED, EXCLUSIVE_LOCKED, this->remote_ptr, dtree::rdma::completion::signaled,
                                        &this->rdma_mem.latch_buffer->remote_latch);
+=======
+      ensure(super::remote_ptr != NULL_REMOTEPTR);
+      my_thread::my().compareSwapAsync(UNLOCKED, EXCLUSIVE_LOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
+                                       &super::rdma_mem.latch_buffer->remote_latch);
+>>>>>>> parent of 93a0d75 (version bug)
       // read remote data
-      my_thread::my().remote_read<T>(this->remote_ptr, static_cast<T*>(this->rdma_mem.local_copy));
-      this->version = this->rdma_mem.local_copy->version;
-      std::cout << "version try_latch" << this->version << " " << this->rdma_mem.local_copy->version << std::endl;
-         bool latched_ = my_thread::my().pollCompletionAsyncCAS(this->remote_ptr, UNLOCKED,
-                                                             &this->rdma_mem.latch_buffer->remote_latch);
-      if (latched_) this->latched = true;
+      my_thread::my().remote_read<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy));
+      super::version = super::rdma_mem.local_copy->version;
+      bool latched_ = my_thread::my().pollCompletionAsyncCAS(super::remote_ptr, UNLOCKED,
+                                                             &super::rdma_mem.latch_buffer->remote_latch);
+      if (latched_) super::latched = true;
       return latched_;
    }
    // we have a copy already in optimistic state and want to upgrade the latch
    // Attention this does leave lock in invalid state and must be called from the GuardX move constructor
    bool try_latch(Version version) {
-      ensure(this->remote_ptr != NULL_REMOTEPTR);
-      ensure(!this->latched);
+      ensure(super::remote_ptr != NULL_REMOTEPTR);
+      ensure(!super::latched);
       auto latched_ =
-          my_thread::my().compareSwap(UNLOCKED, EXCLUSIVE_LOCKED, this->remote_ptr, dtree::rdma::completion::signaled,
-                                      &this->rdma_mem.latch_buffer->remote_latch);
+          my_thread::my().compareSwap(UNLOCKED, EXCLUSIVE_LOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
+                                      &super::rdma_mem.latch_buffer->remote_latch);
       if (!latched_) { return false; }
-      this->latched = true;  // important for unlatch
+      super::latched = true;  // important for unlatch
       // todo check if this could be ab bug since we write back our old state in the unlatch although we have the wrong
       // version
-      my_thread::my().read_latch(this->remote_ptr, this->rdma_mem.latch_buffer);
-      auto* ph = static_cast<PageHeader*>(static_cast<void*>(this->rdma_mem.latch_buffer));
+      my_thread::my().read_latch(super::remote_ptr, super::rdma_mem.latch_buffer);
+      auto* ph = static_cast<PageHeader*>(static_cast<void*>(super::rdma_mem.latch_buffer));
       ensure(ph->remote_latch == EXCLUSIVE_LOCKED);
       if (ph->version != version) {
          version_mismatch = true;
          return false;
       }
       // upgrade header of read data
-      this->version = ph->version;
+      super::version = ph->version;
       // now we upgrade the old header with the new one
-      *this->rdma_mem.local_copy = *ph;
+      *super::rdma_mem.local_copy = *ph;
       return latched_;
    }
 
    void unlatch() {
-      std::cout << "unlatch " << std::endl;
       // unlatch increments thread local buffer to avoid memory corruption
-      ensure(this->latched);
+      ensure(super::latched);
       // increment version
       if (!version_mismatch) {
+<<<<<<< HEAD
          //std::cout << "version preincrement " << this->version << std::endl;
          (this->version)++;
          //std::cout << "version incremented " << this->version << std::endl;
-         //this->rdma_mem.local_copy->version = this->version;
-         //std::cout << "after assignemnt " << this->rdma_mem.local_copy->version << std::endl;
+         this->rdma_mem.local_copy->version = this->version;
+         std::cout << "after assignemnt " << this->rdma_mem.local_copy->version << std::endl;
          ensure(static_cast<T*>(this->rdma_mem.local_copy)->remote_latch == EXCLUSIVE_LOCKED);
          my_thread::my().remote_write<T>(this->remote_ptr, static_cast<T*>(this->rdma_mem.local_copy),
+=======
+         (super::version)++;
+         super::rdma_mem.local_copy->version = super::version;
+         ensure(static_cast<T*>(super::rdma_mem.local_copy)->remote_latch == EXCLUSIVE_LOCKED);
+         my_thread::my().remote_write<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy),
+>>>>>>> parent of 93a0d75 (version bug)
                                          dtree::rdma::completion::signaled);
       }  // unsignaled could improve the performance but the memory management gets annoying as memory used for async.
          // op
       // should not be returned in destructor before the completion finished
-      ensure(my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, this->remote_ptr,
+      ensure(my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, super::remote_ptr,
                                          dtree::rdma::completion::signaled,
-                                         &this->rdma_mem.latch_buffer->remote_latch));
-      this->latched = false;
+                                         &super::rdma_mem.latch_buffer->remote_latch));
+      super::latched = false;
    };
 };
 
@@ -200,12 +218,11 @@ struct AllocationLatch : public AbstractLatch<T> {
       // unlatch increments thread local buffer to avoid memory corruption
       // increment version
       (super::version)++;
-      std::cout << "version allocation " << super::version << std::endl;
       // write back node
       super::rdma_mem.local_copy->version = super::version;
       // todo unsignaled
       my_thread::my().remote_write<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy),
-                                      dtree::rdma::completion::unsignaled);
+                                      dtree::rdma::completion::signaled);
       my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, super::remote_ptr, dtree::rdma::completion::signaled,
                                   &super::rdma_mem.latch_buffer->remote_latch);
       super::latched = false;
@@ -265,9 +282,6 @@ struct GuardO {
       if (!moved) {
          if (latch.validate()) return;
          if (std::uncaught_exceptions() == 0) throw OLCRestartException();
-         else{
-            std::cout << "more uncaught_exceptions" << std::endl;
-         }
       }
    }
 
@@ -294,7 +308,7 @@ struct GuardX {
       while (!latch.try_latch())
          ;
    }
-   // tested 
+
    explicit GuardX(GuardO<T>&& other) : latch(std::move(other.latch)) {
       ensure(latch.remote_ptr == other.latch.remote_ptr);
       ensure(latch.latched == false);

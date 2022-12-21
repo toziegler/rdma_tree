@@ -83,8 +83,8 @@ Worker::Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>&
     : AbstractWorker(workerId, name, cm, nodeId) {
    for (uint64_t r_i = 0; r_i < CONCURRENT_LATCHES; r_i++) {
       RDMAMemoryInfo rmem;
-      rmem.local_copy = (PageHeader*)cm.getGlobalBuffer().allocate(BTREE_NODE_SIZE + PADDING, 8);
-      rmem.latch_buffer = (PageHeader*)cm.getGlobalBuffer().allocate(64, 64);
+      rmem.local_copy = (PageHeader*)cm.getGlobalBuffer().allocate(BTREE_NODE_SIZE *2, 8);
+      rmem.latch_buffer = (PageHeader*)cm.getGlobalBuffer().allocate(128, 64);
       if (!local_rmemory.try_push(rmem)) { throw std::logic_error("local rmemory failed"); }
    }
 }

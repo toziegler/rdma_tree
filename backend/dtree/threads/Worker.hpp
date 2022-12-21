@@ -49,11 +49,11 @@ struct AbstractWorker {
       RemotePtr counter;
       uintptr_t begin_offset;
    };
-   //
+                                                 // 
    rdma::CM<rdma::InitMessage>& cm;
    NodeID nodeId_;
    std::vector<ConnectionContext> cctxs;
-   std::vector<RemoteCacheInfo> remote_caches;  // counter addr
+   std::vector<RemoteCacheInfo> remote_caches;   // counter addr
    uint64_t* barrier_buffer{nullptr};
    // -------------------------------------------------------------------------------------
    uintptr_t barrier;  // barrier address
@@ -125,7 +125,7 @@ struct Worker : public AbstractWorker {
    Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>& cm, NodeID nodeId)
        : AbstractWorker(workerId, name, cm, nodeId) {}
    ~Worker() = default;
-   // -------------------------------------------------------------------------------------
+   // ------------------------------------------------------------------------------------- 
    //=== two-sided tree stub ===//
    bool insert(NodeID nodeId, Key key, Value value) {
       auto& request = *MessageFabric::createMessage<InsertRequest>(cctxs[nodeId].outgoing);
@@ -159,19 +159,18 @@ struct Worker : public AbstractWorker {
 };
 // -------------------------------------------------------------------------------------
 }  // namespace twosided
-namespace onesided {
+namespace onesided{
 using namespace rdma;
-using namespace ::dtree::onesided;
-struct Worker : public AbstractWorker {
+   using namespace ::dtree::onesided;
+struct Worker : public AbstractWorker{
    static thread_local onesided::Worker* tlsPtr;
    static inline onesided::Worker& my() { return *onesided::Worker::tlsPtr; }
    utils::Stack<RemotePtr, TL_CACHE_SIZE> remote_pages;
-   utils::Stack<RDMAMemoryInfo, CONCURRENT_LATCHES>
-       local_rmemory;  // local rdma memory used by the latches not really nicely encapsulated but fine
+   utils::Stack<RDMAMemoryInfo, CONCURRENT_LATCHES> local_rmemory; // local rdma memory used by the latches not really nicely encapsulated but fine
 
    Worker(uint64_t workerId, std::string name, rdma::CM<rdma::InitMessage>& cm, NodeID nodeId);
-   ~Worker() = default;
-
+  ~Worker() = default;
+ 
    template <typename T>
    void remote_write(RemotePtr remote_ptr, /*must be RDMA memory*/ T* local_copy, rdma::completion wc) {
       auto nodeId = remote_ptr.getOwner();
@@ -188,7 +187,6 @@ struct Worker : public AbstractWorker {
    void read_latch(RemotePtr remote_ptr, onesided::PageHeader* /*RDMA memory*/ local_copy) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-      ensure((addr & 63) == 0);
       rdma::postRead(const_cast<onesided::PageHeader*>(local_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled,
                      addr);
       int comp{0};
@@ -204,7 +202,8 @@ struct Worker : public AbstractWorker {
       ensure(sizeof(T) <= THREAD_LOCAL_RDMA_BUFFER);
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
-      rdma::postRead(const_cast<T*>(local_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
+      std::cout << "addr " << addr << " into ptr " << local_copy << " size  " << sizeof(T) << std::endl;
+      rdma::postRead(local_copy, *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
       int comp{0};
       ibv_wc wcReturn;
       while (comp == 0) {
@@ -216,8 +215,7 @@ struct Worker : public AbstractWorker {
    void refresh_caches() {
       uint64_t per_node_cache = TL_CACHE_SIZE / fLU64::FLAGS_storage_nodes;
       for (size_t i = 0; i < FLAGS_storage_nodes; i++) {
-         auto begin_idx =
-             fetchAdd(per_node_cache, remote_caches[i].counter, rdma::completion::signaled, barrier_buffer);
+         auto begin_idx = fetchAdd(per_node_cache, remote_caches[i].counter, rdma::completion::signaled, barrier_buffer);
          for (auto p_idx = begin_idx; p_idx < begin_idx + per_node_cache; p_idx++) {
             RemotePtr addr(i, (p_idx * BTREE_NODE_SIZE) + remote_caches[i].begin_offset);
             ensure(remote_pages.try_push(addr));
@@ -226,8 +224,7 @@ struct Worker : public AbstractWorker {
    }
 
    // returns old value; before increment
-   uint64_t fetchAdd(uint64_t increment, RemotePtr remote_ptr, rdma::completion wc,
-                     uint64_t* /*RDMA Memory*/ cas_buffer) {
+   uint64_t fetchAdd(uint64_t increment, RemotePtr remote_ptr, rdma::completion wc, uint64_t* /*RDMA Memory*/ cas_buffer ) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
       rdma::postFetchAdd(increment, cas_buffer, *(cctxs[nodeId].rctx), wc, addr);
@@ -239,7 +236,7 @@ struct Worker : public AbstractWorker {
       }
       return *cas_buffer;
    }
-   // note should be the same cas_buffer as compareSwapAsync has been called with
+   // note should be the same cas_buffer as compareSwapAsync has been called with 
    bool pollCompletionAsyncCAS(RemotePtr remote_ptr, uint64_t expected, uint64_t* cas_buffer) {
       int comp{0};
       ibv_wc wcReturn;
@@ -252,15 +249,13 @@ struct Worker : public AbstractWorker {
       auto* old = reinterpret_cast<uint64_t*>(cas_buffer);
       return (*old == expected);
    }
-   void compareSwapAsync(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc,
-                         uint64_t* /*RDMA Memory*/ cas_buffer) {
+   void compareSwapAsync(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc, uint64_t* /*RDMA Memory*/ cas_buffer ) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
       rdma::postCompareSwap(expected, desired, cas_buffer, *(cctxs[nodeId].rctx), wc, addr);
    }
-   //    returns true if succeeded
-   bool compareSwap(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc,
-                    uint64_t* /*RDMA Memory*/ cas_buffer) {
+//    returns true if succeeded
+   bool compareSwap(uint64_t expected, uint64_t desired, RemotePtr remote_ptr, rdma::completion wc, uint64_t* /*RDMA Memory*/ cas_buffer  ) {
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
       rdma::postCompareSwap(expected, desired, cas_buffer, *(cctxs[nodeId].rctx), wc, addr);
@@ -273,7 +268,7 @@ struct Worker : public AbstractWorker {
       return (*cas_buffer == expected);
    }
 };
-//-------------------------------------------------------------------------------------
-}  // namespace onesided
+ //-------------------------------------------------------------------------------------
+}  // namespace twosided*/
 }  // namespace threads
 }  // namespace dtree

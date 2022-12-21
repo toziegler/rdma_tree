@@ -40,8 +40,7 @@ enum class PType_t : uint8_t {
 constexpr size_t BUFFER_SIZE = 15;
 struct PageHeader {
    PageHeader(PType_t page_type) : type(page_type) {
-       ensure(((uintptr_t)this & 63) == 0);
-       std::cout << "Alignment check " << std::endl;
+      // ensure(((uintptr_t)this & 63) == 0);
    }
    uint64_t remote_latch{0};
    uint64_t version{0};
