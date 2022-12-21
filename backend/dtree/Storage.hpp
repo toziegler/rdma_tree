@@ -9,6 +9,8 @@
 #include "db/btree.hpp"
 #include "db/OneSidedTypes.hpp"
 #include "dtree/utils/RandomGenerator.hpp"
+#include "dtree/db/OneSidedBTree.hpp"
+#include "dtree/db/OneSidedTypes.hpp"
 // -------------------------------------------------------------------------------------
 #include <memory>
 
@@ -78,6 +80,7 @@ class Storage
    uint64_t* cache_counter;
    onesided::MetadataPage* md;
    uint8_t *node_buffer {nullptr};
+   dtree::onesided::BTreeLeaf<Key, Value>* root ;
   private:
    NodeID nodeId = 0;
    twosided::BTree<Key,Value> tree;

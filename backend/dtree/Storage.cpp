@@ -11,8 +11,6 @@
 
 #include "Defs.hpp"
 #include "dtree/Config.hpp"
-#include "dtree/db/OneSidedBTree.hpp"
-#include "dtree/db/OneSidedTypes.hpp"
 // -------------------------------------------------------------------------------------
 namespace dtree {
 Storage::Storage() {
@@ -46,7 +44,7 @@ Storage::Storage() {
    if ((iptr % 64) != 0) { throw std::runtime_error("not aligned"); }
    onesided::allocateInRDMARegion<onesided::MetadataPage>(md);
    ensure(md->type == onesided::PType_t::METADATA);
-   auto* root = static_cast<onesided::BTreeLeaf<Key, Value>*>(cm->getGlobalBuffer().allocate(BTREE_NODE_SIZE, 64));
+   root = static_cast<onesided::BTreeLeaf<Key, Value>*>(cm->getGlobalBuffer().allocate(BTREE_NODE_SIZE, 64));
    onesided::allocateInRDMARegion<onesided::BTreeLeaf<Key, Value>>(root);
    RemotePtr root_ptr(nodeId, (uintptr_t)root);
    md->setRootPtr(root_ptr);

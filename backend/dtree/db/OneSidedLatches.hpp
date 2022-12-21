@@ -1,5 +1,5 @@
+#pragma once
 #include <stdexcept>
-
 #include "OneSidedTypes.hpp"
 #include "dtree/threads/Worker.hpp"
 namespace dtree {
@@ -20,7 +20,6 @@ struct AbstractLatch {
    }
    AbstractLatch& operator=(AbstractLatch&& other) {
       // std::cout << "move assingment" << std::endl;
-      ensure(!moved);
       ensure(!other.moved);
       other.moved = true;
       remote_ptr = other.remote_ptr;
@@ -33,7 +32,6 @@ struct AbstractLatch {
    }
    explicit AbstractLatch(AbstractLatch&& other) {
       // std::cout << "Moved constructor" << std::endl;
-      ensure(!moved);
       ensure(!other.moved);
       other.moved = true;
       remote_ptr = other.remote_ptr;
@@ -125,7 +123,6 @@ struct ExclusiveLatch : public AbstractLatch<T> {
       my_thread::my().remote_read<T>(this->remote_ptr, static_cast<T*>(this->rdma_mem.local_copy));
          bool latched_ = my_thread::my().pollCompletionAsyncCAS(this->remote_ptr, UNLOCKED,
                                                              &this->rdma_mem.latch_buffer->remote_latch);
-      // TODO: This is dangerous since the remote_read will consume the CAS completion and vice versa 
       this->version = this->rdma_mem.local_copy->version;
       if (latched_) this->latched = true;
       return latched_;
@@ -187,6 +184,7 @@ struct AllocationLatch : public AbstractLatch<T> {
       super::latched = true;
    }
 
+
    void unlatch() {
       ensure(super::latched);
       // unlatch increments thread local buffer to avoid memory corruption
@@ -234,6 +232,7 @@ struct GuardO {
    GuardO(GuardO&& other) : latch(std::move(other.latch)) {
       ensure(!other.moved);
       other.moved = true;
+      moved = false;
    }
 
    // move assignment operator
@@ -242,6 +241,8 @@ struct GuardO {
       if (!moved) checkVersionAndRestart();
       // here we need to return the memory of our current latch
       [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
+      latch.moved = false;
+      moved = false;
       latch = std::move(other.latch);  // calls move assignment
       other.moved = true;
       return *this;
@@ -252,7 +253,9 @@ struct GuardO {
 
    // copy constructor
    GuardO(const GuardO&) = delete;
-
+   bool not_used(){
+      return moved;
+   }
    void checkVersionAndRestart() {
       if (!moved) {
          if (latch.validate()) return;
@@ -271,6 +274,19 @@ struct GuardO {
    T* operator->() {
       ensure(!moved);
       return static_cast<T*>(latch.rdma_mem.local_copy);
+   }
+   template<class C>
+   C* as() {
+      ensure(!moved);
+      return static_cast<T*>(latch.rdma_mem.local_copy);
+   }
+   void release() {
+      if (!moved) {
+         checkVersionAndRestart();
+         moved = true;
+         latch.moved = true;
+         [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
+      }
    }
 };
 
@@ -334,6 +350,7 @@ struct GuardX {
       if (!moved) {
          latch.unlatch();
          moved = true;
+         latch.moved = true;
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
       }
    }
