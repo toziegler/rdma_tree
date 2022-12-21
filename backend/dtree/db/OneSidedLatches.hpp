@@ -15,7 +15,6 @@ struct AbstractLatch {
    bool moved{false};
    RDMAMemoryInfo rdma_mem;  // local rdma memory
    explicit AbstractLatch(RemotePtr remote_address) : remote_ptr(remote_address) {
-      // std::cout << "Constructor AbstractLatch" << std::endl;
       auto success = threads::onesided::Worker::my().local_rmemory.try_pop(rdma_mem);
       if (!success) throw std::runtime_error("Maximum latch depth reached");
    }
@@ -124,10 +123,10 @@ struct ExclusiveLatch : public AbstractLatch<T> {
                                        &this->rdma_mem.latch_buffer->remote_latch);
       // read remote data
       my_thread::my().remote_read<T>(this->remote_ptr, static_cast<T*>(this->rdma_mem.local_copy));
-      this->version = this->rdma_mem.local_copy->version;
-      std::cout << "version try_latch" << this->version << " " << this->rdma_mem.local_copy->version << std::endl;
          bool latched_ = my_thread::my().pollCompletionAsyncCAS(this->remote_ptr, UNLOCKED,
                                                              &this->rdma_mem.latch_buffer->remote_latch);
+      // TODO: This is dangerous since the remote_read will consume the CAS completion and vice versa 
+      this->version = this->rdma_mem.local_copy->version;
       if (latched_) this->latched = true;
       return latched_;
    }
@@ -141,8 +140,6 @@ struct ExclusiveLatch : public AbstractLatch<T> {
                                       &this->rdma_mem.latch_buffer->remote_latch);
       if (!latched_) { return false; }
       this->latched = true;  // important for unlatch
-      // todo check if this could be ab bug since we write back our old state in the unlatch although we have the wrong
-      // version
       my_thread::my().read_latch(this->remote_ptr, this->rdma_mem.latch_buffer);
       auto* ph = static_cast<PageHeader*>(static_cast<void*>(this->rdma_mem.latch_buffer));
       ensure(ph->remote_latch == EXCLUSIVE_LOCKED);
@@ -158,22 +155,17 @@ struct ExclusiveLatch : public AbstractLatch<T> {
    }
 
    void unlatch() {
-      std::cout << "unlatch " << std::endl;
       // unlatch increments thread local buffer to avoid memory corruption
       ensure(this->latched);
       // increment version
       if (!version_mismatch) {
-         //std::cout << "version preincrement " << this->version << std::endl;
          (this->version)++;
-         //std::cout << "version incremented " << this->version << std::endl;
-         //this->rdma_mem.local_copy->version = this->version;
-         //std::cout << "after assignemnt " << this->rdma_mem.local_copy->version << std::endl;
+         this->rdma_mem.local_copy->version = this->version;
          ensure(static_cast<T*>(this->rdma_mem.local_copy)->remote_latch == EXCLUSIVE_LOCKED);
+         // TODO unsignaled
          my_thread::my().remote_write<T>(this->remote_ptr, static_cast<T*>(this->rdma_mem.local_copy),
                                          dtree::rdma::completion::signaled);
-      }  // unsignaled could improve the performance but the memory management gets annoying as memory used for async.
-         // op
-      // should not be returned in destructor before the completion finished
+      }  
       ensure(my_thread::my().compareSwap(EXCLUSIVE_LOCKED, UNLOCKED, this->remote_ptr,
                                          dtree::rdma::completion::signaled,
                                          &this->rdma_mem.latch_buffer->remote_latch));

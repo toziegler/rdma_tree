@@ -38,9 +38,12 @@ void storage_node() {
    {
       while (store.getConnectedClients() == 0)
          ;
-      while (true) { 
+      while (true) {
          sleep(1);
-         std::cout << *store.cache_counter << std::endl;
+         auto* nodes = static_cast<onesided::BTreeLeaf<uint64_t, uint64_t>*>(static_cast<void*>(store.node_buffer));
+         for (size_t i = 0; i < 200; i++) {
+            std::cout << "Node " << i << " latch " << nodes[i].remote_latch << " version " << nodes[i].version << " first value " << nodes[i].value_at(0) << std::endl;
+         }
       }
       [[maybe_unused]] dtree::RemoteGuard rguard(store.getConnectedClients());
    }
@@ -83,9 +86,7 @@ int main(int argc, char* argv[]) {
             onesided::AllocationLatch<Leaf> leaf;
             remote_ht_mtx.lock();
             ensure(i == remote_ht.size());
-            for (Key k_i = 0; k_i < 100; k_i++) {
-               leaf->insert(k_i, 0);
-            }
+            for (Key k_i = 0; k_i < 100; k_i++) { leaf->insert(k_i, 0); }
             std::cout << "allocation version " << leaf.version << std::endl;
             leaf.unlatch();
             remote_ht.push_back(leaf.remote_ptr);
@@ -114,8 +115,8 @@ int main(int argc, char* argv[]) {
                bool consistent = true;
                bool read = false;
                try {
-                  //if (utils::RandomGenerator::getRandU64(0, 100) >= 50) {
-                  if (true) {
+                  if (utils::RandomGenerator::getRandU64(0, 100) >= 50) {
+                     // if (true) {
                      onesided::GuardX<Leaf> leafX(rptr_page);
                      for (Key k_i = 0; k_i < 100; k_i++) {
                         Value value = leafX->value_at(k_i) + 1;
@@ -130,7 +131,8 @@ int main(int argc, char* argv[]) {
                      for (Key k_i = 0; k_i < 100; k_i++) {
                         Value value = leafO->value_at(k_i);
                         if (value != zero_value) {
-                           std::cout << t_i << " threads value " << value << " zero_value " << zero_value << " k_i " << k_i  << " in page " << rptr_page<< std::endl;
+                           std::cout << t_i << " threads value " << value << " zero_value " << zero_value << " k_i "
+                                     << k_i << " in page " << rptr_page << std::endl;
                            consistent = false;
                         }
                      }
@@ -141,10 +143,8 @@ int main(int argc, char* argv[]) {
                   if (read) unsuccessful_reads++;
                   ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
                }
-                  threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
-               if(!consistent){
-                  throw std::logic_error("inconcistency not caught " + std::to_string(t_i));
-               }
+               threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+               if (!consistent) { throw std::logic_error("inconcistency not caught " + std::to_string(t_i)); }
             }
             running_threads_counter--;
          });
@@ -161,12 +161,13 @@ int main(int argc, char* argv[]) {
          std::for_each(std::begin(remote_ht), std::end(remote_ht), [&](RemotePtr rptr) {
             onesided::GuardX<Leaf> leaf(rptr);
             [[maybe_unused]] Value value = leaf->value_at(0);
-            //sum += value;
-            //current_idx++;
-            std::cout << "page Version " << leaf.latch.version  << std::endl;
+             sum += value;
+            // current_idx++;
+            std::cout << "page Version " << leaf.latch.version << std::endl;
             std::cout << "page Version inside leaf " << leaf->version << std::endl;
             std::cout << "page Version inside leaf casted " << leaf.latch.rdma_mem.local_copy->version << std::endl;
-            //std::cout << "value " << value<< std::endl;
+             std::cout << "value " << value<< std::endl;
+             ensure(value == leaf->version -1);
          });
          std::cout << "sum " << sum << " updates " << page_updates << std::endl;
          std::cout << "reads " << reads << " unsusccessful " << unsuccessful_reads << std::endl;
