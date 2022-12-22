@@ -20,12 +20,10 @@ struct AbstractLatch {
    explicit AbstractLatch(RemotePtr remote_address) : remote_ptr(remote_address) {
       if(remote_address != NULL_REMOTEPTR){
       auto success = threads::onesided::Worker::my().local_rmemory.try_pop(rdma_mem);
-      std::cout << "poped " << (uintptr_t)rdma_mem.local_copy << std::endl;
       if (!success) throw std::runtime_error("Maximum latch depth reached");
       }
    }
    AbstractLatch& operator=(AbstractLatch&& other) {
-      // std::cout << "move assingment" << std::endl;
       ensure(!other.moved);
       other.moved = true;
       remote_ptr = other.remote_ptr;
@@ -37,7 +35,6 @@ struct AbstractLatch {
       return *this;
    }
    explicit AbstractLatch(AbstractLatch&& other) {
-      // std::cout << "Moved constructor" << std::endl;
       ensure(!other.moved);
       other.moved = true;
       remote_ptr = other.remote_ptr;
@@ -53,9 +50,7 @@ struct AbstractLatch {
    ~AbstractLatch() {
       if (remote_ptr != NULL_REMOTEPTR && !moved) {
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(rdma_mem);
-         std::cout << "pushed " << (uintptr_t)rdma_mem.local_copy << std::endl;
       } else {
-         // std::cout << "Moved Destructor " << std::endl;
       }
    }
 };
@@ -66,10 +61,8 @@ struct OptimisticLatch : public AbstractLatch<T> {
    using super = AbstractLatch<T>;
    using my_thread = dtree::threads::onesided::Worker;
    explicit OptimisticLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {
-      // std::cout << "OptimisticLatch  Constructor" << std::endl;
    }
    explicit OptimisticLatch(OptimisticLatch&& o_other) : AbstractLatch<T>(std::move(o_other)) {
-      // std::cout << "OptimisticLatch Move Constructor" << std::endl;
    }
 
    OptimisticLatch& operator=(OptimisticLatch&& other) {
@@ -109,7 +102,6 @@ struct ExclusiveLatch : public AbstractLatch<T> {
    using my_thread = dtree::threads::onesided::Worker;
    explicit ExclusiveLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
    explicit ExclusiveLatch(OptimisticLatch<T>&& o_other) : AbstractLatch<T>(std::move(o_other)) {
-      // std::cout << "moved (update) constructor latch" << std::endl;
    }
    // delete constuctors we do not want
    ExclusiveLatch& operator=(ExclusiveLatch& other) = delete;
@@ -201,7 +193,6 @@ struct AllocationLatch : public AbstractLatch<T> {
       // unlatch increments thread local buffer to avoid memory corruption
       // increment version
       (super::version)++;
-      std::cout << "version allocation " << super::version << std::endl;
       // write back node
       super::rdma_mem.local_copy->version = super::version;
       // todo unsignaled
@@ -248,12 +239,10 @@ struct GuardO {
 
    // move assignment operator
    GuardO& operator=(GuardO&& other) {
-      // std::cout << "GuardO move assignment " << std::endl;
       if (!moved ) {
          checkVersionAndRestart();
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
 
-         std::cout << "GuardO pushed operator= " << (uintptr_t)latch.rdma_mem.local_copy << std::endl;
       }
       latch.moved = false;
       moved = false;
@@ -273,7 +262,6 @@ struct GuardO {
          if (latch.validate()) return;
          if (std::uncaught_exceptions() == 0)
             throw OLCRestartException();
-         else { std::cout << "more uncaught_exceptions" << std::endl; }
       }
    }
 
@@ -297,7 +285,6 @@ struct GuardO {
          moved = true;
          latch.moved = true;
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
-         std::cout << "GuardO pushed release" << (uintptr_t)latch.rdma_mem.local_copy << std::endl;
       }
    }
 };
@@ -340,7 +327,6 @@ struct GuardX {
          ensure(latch.latched);
          latch.unlatch();
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
-         std::cout << "GuardX pushed operator= " << (uintptr_t)latch.rdma_mem.local_copy << std::endl;
       }
       latch = std::move(other.latch);  // calls move assignment
       other.moved = true;
@@ -365,7 +351,6 @@ struct GuardX {
          moved = true;
          latch.moved = true;
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
-         std::cout << "GuardX pushed released " << (uintptr_t)latch.rdma_mem.local_copy << std::endl;
       }
    }
 };

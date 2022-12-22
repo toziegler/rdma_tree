@@ -176,6 +176,7 @@ int main(int argc, char* argv[]) {
                auto p_id = get_partition(k);
                Value v = k;
                threads::twosided::Worker::my().insert(p_id, k, v);
+
                threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
             }
          });

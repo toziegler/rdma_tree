@@ -218,7 +218,6 @@ struct Worker : public AbstractWorker {
       for (size_t i = 0; i < FLAGS_storage_nodes; i++) {
          auto begin_idx =
              fetchAdd(per_node_cache, remote_caches[i].counter, rdma::completion::signaled, barrier_buffer);
-         std::cout << "beging " << begin_idx << " end_idx " << begin_idx + per_node_cache << std::endl;
          for (auto p_idx = begin_idx; p_idx < begin_idx + per_node_cache; p_idx++) {
             RemotePtr addr(i, (p_idx * BTREE_NODE_SIZE) + remote_caches[i].begin_offset);
             ensure(remote_pages.try_push(addr));

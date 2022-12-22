@@ -77,6 +77,12 @@ struct BTreeLeaf : public BTreeHeader {
           std::distance(std::begin(keys), std::lower_bound(std::begin(keys), std::begin(keys) + count, key)));
    }
 
+   bool lookup(const Key& key, Value& retValue) {
+      auto idx = lower_bound(key);
+      if (idx == end() && key_at(idx) != key) return false;
+      retValue = value_at(idx);
+      return true;
+   }
    void insert(const Key& key, const Value& value) {
       Pos position = lower_bound(key);
       if (position != end()) {
@@ -125,7 +131,7 @@ struct BTreeLeaf : public BTreeHeader {
    bool has_space() { return (count < max_entries); }
    Pos begin() { return 0; }
    Pos end() { return count; }
-   // returns one index behind valid index as usual inline
+   // returns one it behind valid it as usual inline
    Key key_at(Pos idx) { return keys[idx]; }
    inline Value value_at(Pos idx) { return values[idx]; }
    void print_keys() {
@@ -198,13 +204,14 @@ struct BTreeInner : public BTreeHeader {
       rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep},
                                      fenceKeys.getUpper());  // order is important
       fenceKeys.setFences(fenceKeys.getLower(), {.isInfinity = false, .key = sepInfo.sep});
+      rightNode.unlatch();
       return sepInfo;
    }
 
    Pos find_separator() { return count / 2; }
    bool has_space() { return (count < max_entries); }
    Pos begin() { return 0; }
-   Pos end() { return count; }  // returns one index behind valid index as usual
+   Pos end() { return count; }  // returns one it behind valid it as usual
    inline Key key_at(Pos idx) { return sep[idx]; }
    inline RemotePtr value_at(Pos idx) { return children[idx]; }
 
@@ -218,9 +225,10 @@ struct BTreeInner : public BTreeHeader {
       std::cout << children[idx] << "\n";  // print n+1 child
    }
 };
-
+// this is used in the traversal as we do not know which kind of node we will retrieve
 struct NodePlaceholder : public BTreeHeader {
    uint8_t padding[BTREE_NODE_SIZE - sizeof(BTreeHeader)];
+   // cast to leaf or inner
    template <class T>
    T* as() {
       return (T*)(this);
@@ -244,55 +252,167 @@ struct BTree {
       parent->setHeight(parent->getHeight());
       new_root.unlatch();
    }
+   // helper functions for range scan
+   template <typename FN>
+   std::pair<bool, Key> initial_traversal(const Key& moving_start,
+                                          FN iterate_leaf) {  // find first inner node with lower bound search
+      GuardO<MetadataPage> g_metadata(metadata);
+      GuardO<NodePlaceholder> parent;
+      GuardO<NodePlaceholder> node(g_metadata->getRootPtr());
+      g_metadata.checkVersionAndRestart();
+      while (node->getNodeType() == BTreeNodeType::INNER) {
+         parent = std::move(node);
+         node = GuardO<NodePlaceholder>(parent->as<Inner>()->next_child(moving_start));
+         parent.checkVersionAndRestart();
+      }
+      // handle edge case of root == leaf
+      if (parent.not_used()) {
+         ensure(node->getNodeType() == BTreeNodeType::LEAF);
+         iterate_leaf(node->as<Leaf>());
+         return {true, moving_start};  // finished scan
+      }
+      node.release();
+      // parent can be used to prefetch should be inner node
+      Pos it_inner = parent->as<Inner>()->lower_bound(moving_start);
+      // iterate inner and get all leafes
+      for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
+         // fetch new leaf
+         GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
+         auto finished = iterate_leaf(leaf->as<Leaf>());
+         if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)
+            return {true, moving_start};  // finished scan
+      }
+      // continue to scan with adjusted search method;
+      return {false, parent->as<Inner>()->fenceKeys.getUpper().key};  // finished scan
+   }
+
+   // uses upper bound traversal to steer the scan
+   template <typename FN>
+   std::pair<bool, Key> consecutive_traversal(const Key& moving_start,
+                                          FN iterate_leaf) {  // find first inner node with lower bound search
+      GuardO<MetadataPage> g_metadata(metadata);
+      GuardO<NodePlaceholder> parent;
+      GuardO<NodePlaceholder> node(g_metadata->getRootPtr());
+      g_metadata.checkVersionAndRestart();
+      while (node->getNodeType() == BTreeNodeType::INNER) {
+         parent = std::move(node);
+         auto idx = parent->as<Inner>()->upper_bound(moving_start);
+         node = GuardO<NodePlaceholder>(parent->as<Inner>()->children[idx]);
+         parent.checkVersionAndRestart();
+      }
+      node.release();
+      // we can scan from the beginning 
+      Pos it_inner = parent->as<Inner>()->begin();
+      // iterate inner and get all leafes
+      for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
+         // fetch new leaf
+         GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
+         auto finished = iterate_leaf(leaf->as<Leaf>());
+         if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)
+            return {true, moving_start};  // finished scan
+      }
+      // continue to scan with adjusted search method;
+      return {false, parent->as<Inner>()->fenceKeys.getUpper().key};  // finished scan
+   }
+   // this function scans one inner node and returns
+   template <typename FN>
+   void range_scan(const Key& from, const Key& to, FN scan_function) {
+      [[maybe_unused]] bool first_traversal = true;  // need to use lower_bound search
+      [[maybe_unused]] bool scan_finished = false;    // need to use lower_bound search
+      auto moving_start = from;                      // is used to steer the scan
+      auto iterate_leaf = [&](Leaf* leaf) -> bool {
+         for (Pos it = leaf->lower_bound(moving_start); it != leaf->end(); it++) {
+            auto c_key = leaf->key_at(it);
+            if (c_key > to) return true;  // scan finished
+            scan_function(c_key, leaf->value_at(it));
+            moving_start = c_key;
+         }
+         return false;  // continue to scan
+      };
+      for ([[maybe_unused]] size_t repeat = 0;; repeat++) {
+         try {
+            if (first_traversal) std::tie(scan_finished, moving_start) = initial_traversal(moving_start, iterate_leaf);
+            else if(!scan_finished) std::tie(scan_finished, moving_start) = consecutive_traversal(moving_start, iterate_leaf);
+            else return;
+            first_traversal = false;
+         } catch (const OLCRestartException&) {
+            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
+         }
+      }
+   }
+
+   bool lookup(Key key, Value& retValue) {
+      for ([[maybe_unused]] size_t repeat = 0;; repeat++) {
+         try {
+            GuardO<MetadataPage> g_metadata(metadata);
+            GuardO<NodePlaceholder> parent;
+            GuardO<NodePlaceholder> node(g_metadata->getRootPtr());
+            g_metadata.checkVersionAndRestart();
+            while (node->getNodeType() == BTreeNodeType::INNER) {
+               parent = std::move(node);
+               node = GuardO<NodePlaceholder>(parent->as<Inner>()->next_child(key));
+               parent.checkVersionAndRestart();
+            }
+            GuardO<NodePlaceholder> leaf(std::move(node));
+            return leaf->as<Leaf>()->lookup(key, retValue);
+         } catch (const OLCRestartException&) {
+            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
+         }
+      }
+   }
 
    void insert(Key key, Value value) {
       for ([[maybe_unused]] size_t repeat = 0;; repeat++) {
          try {
             GuardO<MetadataPage> g_metadata(metadata);
-            g_metadata->getRootPtr();
             GuardO<NodePlaceholder> parent;
             GuardO<NodePlaceholder> node(g_metadata->getRootPtr());
             g_metadata.checkVersionAndRestart();
             while (node->getNodeType() == BTreeNodeType::INNER) {
+               // split logic
                if (!node->as<Inner>()->has_space()) {
-                  // split logix
+                  // split root
                   if (parent.not_used()) {
                      GuardX<MetadataPage> md_parent(std::move(g_metadata));
                      GuardX<NodePlaceholder> x_node(std::move(node));
-                     // create new node
                      auto sepInfo = x_node->as<Inner>()->split();
                      make_new_root(md_parent, sepInfo.sep, x_node.latch.remote_ptr, sepInfo.rightNode);
                      throw OLCRestartException();
                   }
-                  // TODO other split
-                  throw std::logic_error("Inner split not implemented ");
+                  // split inner node
+                  GuardX<NodePlaceholder> x_parent(std::move(parent));
+                  GuardX<NodePlaceholder> x_node(std::move(node));
+                  auto sepInfo = x_node->as<Inner>()->split();
+                  x_parent->as<Inner>()->insert(sepInfo.sep, x_node.latch.remote_ptr, sepInfo.rightNode);
+                  throw OLCRestartException();
                }
                parent = std::move(node);
                node = GuardO<NodePlaceholder>(parent->as<Inner>()->next_child(key));
                parent.checkVersionAndRestart();
             }
 
-            GuardX<NodePlaceholder> leaf(std::move(node));
-            if (!leaf->as<Leaf>()->has_space()) {
-               // TODO need parent and secure latching without hole
+            if (!node->as<Leaf>()->has_space()) {
                if (parent.not_used()) {
                   GuardX<MetadataPage> md_parent(std::move(g_metadata));
-                  // create new node
+                  GuardX<NodePlaceholder> leaf(std::move(node));
                   auto sepInfo = leaf->as<Leaf>()->split();
                   make_new_root(md_parent, sepInfo.sep, leaf.latch.remote_ptr, sepInfo.rightNode);
                   throw OLCRestartException();
                }
-               throw std::logic_error("Leaf split not implemented ");
+               GuardX<NodePlaceholder> x_parent(std::move(parent));
+               GuardX<NodePlaceholder> leaf(std::move(node));
+               auto sepInfo = leaf->as<Leaf>()->split();
+               x_parent->as<Inner>()->insert(sepInfo.sep, leaf.latch.remote_ptr, sepInfo.rightNode);
+               throw OLCRestartException();
             }
-            leaf->as<Leaf>()->insert(key, value);
+            GuardX<NodePlaceholder> leaf(std::move(node));
+            leaf->as<Leaf>()->upsert(key, value);
             return;
          } catch (const OLCRestartException&) {
             ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
          }
       }
    }
-   // lookup
-   // scan
 };
 }  // namespace onesided
 }  // namespace dtree

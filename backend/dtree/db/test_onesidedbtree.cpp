@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <random>
 #include <stdexcept>
 // -------------------------------------------------------------------------------------
@@ -44,11 +45,7 @@ void storage_node() {
          std::cout << "root  latch " << store.root->remote_latch << " version " << store.root->version
                    << " first value " << store.root->value_at(0) << " count " << store.root->count << std::endl;
          std::cout << "metadataPage root " << store.md->getRootPtr() << std::endl;
-         // auto* nodes = static_cast<onesided::BTreeLeaf<uint64_t, uint64_t>*>(static_cast<void*>(store.node_buffer));
-         // for (size_t i = 0; i < 200; i++) {
-         // std::cout << "Node " << i << " latch " << nodes[i].remote_latch << " version " << nodes[i].version << "
-         // first value " << nodes[i].value_at(0) << std::endl;
-         //}
+         std::cout << "space consumption " << *store.cache_counter << std::endl;
       }
       [[maybe_unused]] dtree::RemoteGuard rguard(store.getConnectedClients());
    }
@@ -61,7 +58,13 @@ int main(int argc, char* argv[]) {
    using namespace dtree;
    gflags::SetUsageMessage("Dtree Frontend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-
+   auto partition = [&](uint64_t id, uint64_t participants, uint64_t N) -> std::pair<size_t, size_t> {
+      const uint64_t blockSize = N / participants;
+      auto begin = id * blockSize;
+      auto end = begin + blockSize;
+      if (id == participants - 1) end = N;
+      return {begin, end};
+   };
    if (FLAGS_storage_node) {
       std::cout << "started storage node "
                 << "\n";
@@ -80,18 +83,15 @@ int main(int argc, char* argv[]) {
          comp.getWorkerPool().joinAll();
          barrier_stage++;
       };
+      size_t KEYS = 1e6;
+      std::vector<Key> keys(KEYS);
+      std::iota(std::begin(keys), std::end(keys), 1);
+      std::random_device rd;
+      std::mt19937 g(rd());
+      std::shuffle(std::begin(keys), std::end(keys), g);
       //=== build tree ===//
       // get compute node partition
-      comp.getWorkerPool().scheduleJobSync(0, [&]() {
-         onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
-         std::cout << "BTree created " << std::endl;
-         for (Key k_i = 1; k_i < 300; k_i++) {
-            usleep(250);
-            tree.insert(k_i, k_i);
-            std::cout << "ki " << k_i << std::endl;
-            ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
-         }
-      });
+      comp.getWorkerPool().scheduleJobSync(0, [&]() {});
       std::cout << "BEFORE BARRIER " << std::endl;
       barrier_wait();
       //=== Benchmark ===//
@@ -102,7 +102,17 @@ int main(int argc, char* argv[]) {
       for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
          comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
             running_threads_counter++;
-            while (keep_running) {}
+            onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
+            auto p = partition(t_i, FLAGS_worker, keys.size());
+            while (keep_running) {
+               for (size_t p_i = p.first; p_i < p.second; p_i++) {
+                  tree.insert(keys[p_i], keys[p_i]);
+                  threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+                  Value retValue;
+                  ensure(tree.lookup(keys[p_i], retValue));
+                  ensure(retValue == keys[p_i]);
+               }
+            }
             running_threads_counter--;
          });
       }
@@ -111,6 +121,16 @@ int main(int argc, char* argv[]) {
       while (running_threads_counter) _mm_pause();
       comp.getWorkerPool().joinAll();
       comp.stopProfiler();
+      comp.getWorkerPool().scheduleJobSync(0, [&]() {
+         onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
+         Key current_key = 1;
+         tree.range_scan(1, 100000, [&](Key& key, Value value) {
+            std::cout << "Key " << key << " Value " << value << std::endl;
+            ensure(current_key == key);
+            current_key++;
+         });
+      });
+      std::cout << "Validation [OK]" << std::endl;
    }
    return 0;
 }
