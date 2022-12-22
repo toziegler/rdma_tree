@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
       comp.getWorkerPool().scheduleJobSync(0, [&]() {
          onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
          std::cout << "BTree created " << std::endl;
-         for (Key k_i = 1; k_i < 500; k_i++) {
+         for (Key k_i = 1; k_i < 300; k_i++) {
             usleep(250);
             tree.insert(k_i, k_i);
             std::cout << "ki " << k_i << std::endl;

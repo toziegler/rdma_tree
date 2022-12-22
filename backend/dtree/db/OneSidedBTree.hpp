@@ -233,38 +233,39 @@ template <typename Key, typename Value>
 struct BTree {
    using Leaf = BTreeLeaf<Key, Value>;
    using Inner = BTreeInner<Key>;
+   using SepInfo = SeparatorInfo<Key>;
    RemotePtr metadata;
    BTree(RemotePtr metadata) : metadata(metadata) {}
    // insert
+   void make_new_root(GuardX<MetadataPage>& parent, Key separator, RemotePtr left, RemotePtr right) {
+      AllocationLatch<Inner> new_root;
+      new_root->insert(separator, left, right);
+      parent->setRootPtr(new_root.remote_ptr);
+      parent->setHeight(parent->getHeight());
+      new_root.unlatch();
+   }
+
    void insert(Key key, Value value) {
       for ([[maybe_unused]] size_t repeat = 0;; repeat++) {
          try {
-            uint8_t height = 0;
             GuardO<MetadataPage> g_metadata(metadata);
-            height = g_metadata->getHeight();
-            RemotePtr current_ptr = g_metadata->getRootPtr();
-            std::cout << "current ptr" << current_ptr << std::endl;
+            g_metadata->getRootPtr();
             GuardO<NodePlaceholder> parent;
-            GuardO<NodePlaceholder> node(current_ptr);
+            GuardO<NodePlaceholder> node(g_metadata->getRootPtr());
+            g_metadata.checkVersionAndRestart();
             while (node->getNodeType() == BTreeNodeType::INNER) {
                if (!node->as<Inner>()->has_space()) {
                   // split logix
                   if (parent.not_used()) {
-                     std::cout << "going into split " << std::endl;
                      GuardX<MetadataPage> md_parent(std::move(g_metadata));
                      GuardX<NodePlaceholder> x_node(std::move(node));
                      // create new node
-                     std::cout << " split() " << std::endl;
                      auto sepInfo = x_node->as<Inner>()->split();
-                     std::cout << "after split() " << std::endl;
-                     AllocationLatch<Inner> new_root;
-                     new_root->insert(sepInfo.sep, x_node.latch.remote_ptr, sepInfo.rightNode);
-                     md_parent->setRootPtr(new_root.remote_ptr);
-                     md_parent->setHeight(height + 1);
-                     new_root.unlatch();
-                     std::cout << "splitted " << std::endl;
+                     make_new_root(md_parent, sepInfo.sep, x_node.latch.remote_ptr, sepInfo.rightNode);
                      throw OLCRestartException();
                   }
+                  // TODO other split
+                  throw std::logic_error("Inner split not implemented ");
                }
                parent = std::move(node);
                node = GuardO<NodePlaceholder>(parent->as<Inner>()->next_child(key));
@@ -274,17 +275,14 @@ struct BTree {
             GuardX<NodePlaceholder> leaf(std::move(node));
             if (!leaf->as<Leaf>()->has_space()) {
                // TODO need parent and secure latching without hole
-               std::cout << "going into split leaf" << std::endl;
-               GuardX<MetadataPage> md_parent(std::move(g_metadata));
-               // create new node
-               auto sepInfo = leaf->as<Leaf>()->split();
-               AllocationLatch<Inner> new_root;
-               new_root->insert(sepInfo.sep, current_ptr, sepInfo.rightNode);
-               md_parent->setRootPtr(new_root.remote_ptr);
-               md_parent->setHeight(height + 1);
-               new_root.unlatch();
-               std::cout << "splitted " << std::endl;
-               throw OLCRestartException();
+               if (parent.not_used()) {
+                  GuardX<MetadataPage> md_parent(std::move(g_metadata));
+                  // create new node
+                  auto sepInfo = leaf->as<Leaf>()->split();
+                  make_new_root(md_parent, sepInfo.sep, leaf.latch.remote_ptr, sepInfo.rightNode);
+                  throw OLCRestartException();
+               }
+               throw std::logic_error("Leaf split not implemented ");
             }
             leaf->as<Leaf>()->insert(key, value);
             return;
