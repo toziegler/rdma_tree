@@ -123,6 +123,11 @@ int main(int argc, char* argv[]) {
       comp.stopProfiler();
       comp.getWorkerPool().scheduleJobSync(0, [&]() {
          onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
+         for (Key k = 1; k < 100000; k++) {
+            Value retValue;
+            ensure(tree.lookup(k, retValue));
+            ensure(k == retValue);
+         }
          Key current_key = 1;
          tree.range_scan(1, 100000, [&](Key& key, Value value) {
             std::cout << "Key " << key << " Value " << value << std::endl;

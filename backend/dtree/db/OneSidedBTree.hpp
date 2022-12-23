@@ -199,7 +199,7 @@ struct BTreeInner : public BTreeHeader {
                 std::begin(rightNode->children));
       // update counts
       rightNode->count = count - static_cast<Pos>((sepPosition + 1));
-      count = count - static_cast<Pos>(rightNode->count - 1);  // -1 removes the sep key but ptr is kept
+      count = static_cast<Pos>(count - static_cast<Pos>(rightNode->count) - static_cast<Pos>(1));  // -1 removes the sep key but ptr is kept
       // set fences
       rightNode->fenceKeys.setFences({.isInfinity = false, .key = sepInfo.sep},
                                      fenceKeys.getUpper());  // order is important
@@ -278,18 +278,21 @@ struct BTree {
       for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
          // fetch new leaf
          GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
+         std::cout << "parent fence keys " << parent->as<Inner>()->fenceKeys.getLower().key <<"  " << parent->as<Inner>()->fenceKeys.getUpper().key << std::endl;
+         std::cout << "fence keys " << leaf->as<Leaf>()->fenceKeys.getLower().key <<"  " << leaf->as<Leaf>()->fenceKeys.getUpper().key << std::endl;
          auto finished = iterate_leaf(leaf->as<Leaf>());
          if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)
             return {true, moving_start};  // finished scan
       }
       // continue to scan with adjusted search method;
+      std::cout << "finished first traversal " << parent->as<Inner>()->fenceKeys.getUpper().key << std::endl;
       return {false, parent->as<Inner>()->fenceKeys.getUpper().key};  // finished scan
    }
 
    // uses upper bound traversal to steer the scan
    template <typename FN>
    std::pair<bool, Key> consecutive_traversal(const Key& moving_start,
-                                          FN iterate_leaf) {  // find first inner node with lower bound search
+                                              FN iterate_leaf) {  // find first inner node with lower bound search
       GuardO<MetadataPage> g_metadata(metadata);
       GuardO<NodePlaceholder> parent;
       GuardO<NodePlaceholder> node(g_metadata->getRootPtr());
@@ -301,12 +304,15 @@ struct BTree {
          parent.checkVersionAndRestart();
       }
       node.release();
-      // we can scan from the beginning 
-      Pos it_inner = parent->as<Inner>()->begin();
+      // we can scan from the beginning
+      auto new_start = parent->as<Inner>()->fenceKeys.getLower().key;
+      Pos it_inner = parent->as<Inner>()->lower_bound(new_start);
       // iterate inner and get all leafes
       for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
          // fetch new leaf
          GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
+         std::cout << "parent fence keys " << parent->as<Inner>()->fenceKeys.getLower().key <<"  " << parent->as<Inner>()->fenceKeys.getUpper().key << std::endl;
+         std::cout << "fence keys " << leaf->as<Leaf>()->fenceKeys.getLower().key <<"  " << leaf->as<Leaf>()->fenceKeys.getUpper().key << std::endl;
          auto finished = iterate_leaf(leaf->as<Leaf>());
          if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)
             return {true, moving_start};  // finished scan
@@ -318,7 +324,7 @@ struct BTree {
    template <typename FN>
    void range_scan(const Key& from, const Key& to, FN scan_function) {
       [[maybe_unused]] bool first_traversal = true;  // need to use lower_bound search
-      [[maybe_unused]] bool scan_finished = false;    // need to use lower_bound search
+      [[maybe_unused]] bool scan_finished = false;   // need to use lower_bound search
       auto moving_start = from;                      // is used to steer the scan
       auto iterate_leaf = [&](Leaf* leaf) -> bool {
          for (Pos it = leaf->lower_bound(moving_start); it != leaf->end(); it++) {
@@ -331,12 +337,17 @@ struct BTree {
       };
       for ([[maybe_unused]] size_t repeat = 0;; repeat++) {
          try {
-            if (first_traversal) std::tie(scan_finished, moving_start) = initial_traversal(moving_start, iterate_leaf);
-            else if(!scan_finished) std::tie(scan_finished, moving_start) = consecutive_traversal(moving_start, iterate_leaf);
-            else return;
+            if (first_traversal)
+               std::tie(scan_finished, moving_start) = initial_traversal(moving_start, iterate_leaf);
+            else if (!scan_finished) {
+               std::cout << "Second traversal started from " << moving_start << std::endl;
+               std::tie(scan_finished, moving_start) = consecutive_traversal(moving_start, iterate_leaf);
+            } else
+               return;
             first_traversal = false;
          } catch (const OLCRestartException&) {
             ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
+            std::cout << "Exception caught" << std::endl;
          }
       }
    }
