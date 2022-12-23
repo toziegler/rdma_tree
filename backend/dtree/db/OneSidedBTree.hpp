@@ -9,6 +9,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <type_traits>
@@ -278,14 +279,11 @@ struct BTree {
       for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
          // fetch new leaf
          GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
-         std::cout << "parent fence keys " << parent->as<Inner>()->fenceKeys.getLower().key <<"  " << parent->as<Inner>()->fenceKeys.getUpper().key << std::endl;
-         std::cout << "fence keys " << leaf->as<Leaf>()->fenceKeys.getLower().key <<"  " << leaf->as<Leaf>()->fenceKeys.getUpper().key << std::endl;
          auto finished = iterate_leaf(leaf->as<Leaf>());
          if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)
             return {true, moving_start};  // finished scan
       }
       // continue to scan with adjusted search method;
-      std::cout << "finished first traversal " << parent->as<Inner>()->fenceKeys.getUpper().key << std::endl;
       return {false, parent->as<Inner>()->fenceKeys.getUpper().key};  // finished scan
    }
 
@@ -311,8 +309,6 @@ struct BTree {
       for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
          // fetch new leaf
          GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
-         std::cout << "parent fence keys " << parent->as<Inner>()->fenceKeys.getLower().key <<"  " << parent->as<Inner>()->fenceKeys.getUpper().key << std::endl;
-         std::cout << "fence keys " << leaf->as<Leaf>()->fenceKeys.getLower().key <<"  " << leaf->as<Leaf>()->fenceKeys.getUpper().key << std::endl;
          auto finished = iterate_leaf(leaf->as<Leaf>());
          if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)
             return {true, moving_start};  // finished scan
@@ -322,7 +318,7 @@ struct BTree {
    }
    // this function scans one inner node and returns
    template <typename FN>
-   void range_scan(const Key& from, const Key& to, FN scan_function) {
+   void range_scan(const Key from, const Key to, FN scan_function, std::function<void()> undo) {
       [[maybe_unused]] bool first_traversal = true;  // need to use lower_bound search
       [[maybe_unused]] bool scan_finished = false;   // need to use lower_bound search
       auto moving_start = from;                      // is used to steer the scan
@@ -340,14 +336,17 @@ struct BTree {
             if (first_traversal)
                std::tie(scan_finished, moving_start) = initial_traversal(moving_start, iterate_leaf);
             else if (!scan_finished) {
-               std::cout << "Second traversal started from " << moving_start << std::endl;
                std::tie(scan_finished, moving_start) = consecutive_traversal(moving_start, iterate_leaf);
             } else
                return;
             first_traversal = false;
          } catch (const OLCRestartException&) {
             ensure(threads::onesided::Worker::my().local_rmemory.get_size() == CONCURRENT_LATCHES);
-            std::cout << "Exception caught" << std::endl;
+            // restart at the beginning 
+            moving_start = from; 
+            first_traversal = true;
+            scan_finished = false;
+            undo();
          }
       }
    }
@@ -388,7 +387,7 @@ struct BTree {
                      GuardX<NodePlaceholder> x_node(std::move(node));
                      auto sepInfo = x_node->as<Inner>()->split();
                      make_new_root(md_parent, sepInfo.sep, x_node.latch.remote_ptr, sepInfo.rightNode);
-                     throw OLCRestartException();
+                     throw OLCRestartException(); 
                   }
                   // split inner node
                   GuardX<NodePlaceholder> x_parent(std::move(parent));

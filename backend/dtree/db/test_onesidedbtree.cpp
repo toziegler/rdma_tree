@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
    using namespace dtree;
    gflags::SetUsageMessage("Dtree Frontend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-   auto partition = [&](uint64_t id, uint64_t participants, uint64_t N) -> std::pair<size_t, size_t> {
+   [[maybe_unused]] auto partition = [&](uint64_t id, uint64_t participants, uint64_t N) -> std::pair<size_t, size_t> {
       const uint64_t blockSize = N / participants;
       auto begin = id * blockSize;
       auto end = begin + blockSize;
@@ -91,7 +91,20 @@ int main(int argc, char* argv[]) {
       std::shuffle(std::begin(keys), std::end(keys), g);
       //=== build tree ===//
       // get compute node partition
-      comp.getWorkerPool().scheduleJobSync(0, [&]() {});
+      for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
+         comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
+            onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
+            auto p = partition(t_i, FLAGS_worker, keys.size());
+            for (size_t p_i = p.first; p_i < p.second; p_i++) {
+               tree.insert(keys[p_i], keys[p_i]);
+               threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+               Value retValue;
+               ensure(tree.lookup(keys[p_i], retValue));
+               ensure(retValue == keys[p_i]);
+            }
+         });
+      }
+      comp.getWorkerPool().joinAll();
       std::cout << "BEFORE BARRIER " << std::endl;
       barrier_wait();
       //=== Benchmark ===//
@@ -99,19 +112,34 @@ int main(int argc, char* argv[]) {
       comp.startProfiler(wl);
       std::atomic<bool> keep_running = true;
       std::atomic<u64> running_threads_counter = 0;
+      std::atomic<u64> range_scans_completed = 0;
       for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
          comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
             running_threads_counter++;
             onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
-            auto p = partition(t_i, FLAGS_worker, keys.size());
             while (keep_running) {
-               for (size_t p_i = p.first; p_i < p.second; p_i++) {
-                  tree.insert(keys[p_i], keys[p_i]);
-                  threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
-                  Value retValue;
-                  ensure(tree.lookup(keys[p_i], retValue));
-                  ensure(retValue == keys[p_i]);
+               [[maybe_unused]] auto rnd_op = utils::RandomGenerator::getRandU64(0, 100);
+               auto k_i = utils::RandomGenerator::getRandU64(0, KEYS);
+               auto range = utils::RandomGenerator::getRandU64(10, 100000);
+               if (rnd_op < 20) {
+                  // if (false) {
+                  tree.insert(k_i, k_i);
+               } else {
+                  std::vector<Key> result_set;
+                  result_set.reserve(range);
+                  tree.range_scan(
+                      k_i, k_i + range, [&](Key& key, [[maybe_unused]] Value value) { result_set.push_back(key); },
+                      [&]() {
+                         result_set.clear();
+                      });
+                  range_scans_completed++;
+                  std::for_each (std::begin(result_set), std::end(result_set), [&](Key& key) {
+                     ensure(key == k_i);
+                     k_i++;
+                  })
+                     ;
                }
+               threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
             }
             running_threads_counter--;
          });
@@ -123,19 +151,27 @@ int main(int argc, char* argv[]) {
       comp.stopProfiler();
       comp.getWorkerPool().scheduleJobSync(0, [&]() {
          onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
-         for (Key k = 1; k < 100000; k++) {
-            Value retValue;
-            ensure(tree.lookup(k, retValue));
-            ensure(k == retValue);
-         }
+         // for (Key k = 1; k < KEYS; k++) {
+         // Value retValue;
+         // ensure(tree.lookup(k, retValue));
+         // ensure(k == retValue);
+         //}
          Key current_key = 1;
-         tree.range_scan(1, 100000, [&](Key& key, Value value) {
-            std::cout << "Key " << key << " Value " << value << std::endl;
-            ensure(current_key == key);
-            current_key++;
-         });
+         tree.range_scan(
+             1, KEYS,
+             [&](Key& key, [[maybe_unused]] Value value) {
+                ensure(current_key == key);
+                current_key++;
+                auto rnd_fault = utils::RandomGenerator::getRandU64(0, 500000);
+                if (rnd_fault <= 1) { throw onesided::OLCRestartException(); }
+             },
+             [&]() {
+                current_key = 1;
+                std::cout << "undo function " << std::endl;
+             });
       });
       std::cout << "Validation [OK]" << std::endl;
+      std::cout << "range scans completed " << range_scans_completed << std::endl;
    }
    return 0;
 }
