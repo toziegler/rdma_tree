@@ -1,6 +1,9 @@
 #include "Defs.hpp"
 #include "PerfEvent.hpp"
 #include "dtree/Compute.hpp"
+#include "dtree/db/OneSidedBTree.hpp"
+#include "dtree/db/OneSidedLatches.hpp"
+#include "dtree/db/OneSidedTypes.hpp"
 #include "dtree/Config.hpp"
 #include "dtree/Storage.hpp"
 #include "dtree/profiling/ProfilingThread.hpp"
@@ -126,12 +129,15 @@ int main(int argc, char* argv[]) {
    gflags::SetUsageMessage("Dtree Frontend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    //=== Node Partitions ===//
+   if(FLAGS_keys % fLU64::FLAGS_storage_nodes != 0){
+      throw std::invalid_argument("Number keys must be dividable by the number of storage nodes");
+   }
    std::string skew = (FLAGS_percentage_keys.empty()) ? "No skew" : FLAGS_percentage_keys;
    std::vector<std::pair<Key, Key>> partition_map;  // maps partitions to node_id [begin,end)
    auto get_partition = [&](Key& key) {
       for (uint64_t p_i = 0; p_i < partition_map.size(); p_i++)
          if (key >= partition_map[p_i].first && key < partition_map[p_i].second) return p_i;
-      throw std::logic_error("Partition not found");
+      throw std::logic_error("Partition not found" + std::to_string(key));
    };
    {
       std::vector<double> percentage_keys;
@@ -151,14 +157,14 @@ int main(int argc, char* argv[]) {
       storage_node();
    } else {
       std::cout << "started compute node" << std::endl;
-      Compute<threads::twosided::Worker> comp;
+      Compute<threads::onesided::Worker> comp;
       comp.startAndConnect();
       //=== Barrier ===//
       uint64_t barrier_stage = 1;
       auto barrier_wait = [&]() {
          for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
             comp.getWorkerPool().scheduleJobAsync(
-                t_i, [&, t_i]() { threads::twosided::Worker::my().rdma_barrier_wait(barrier_stage); });
+                t_i, [&, t_i]() { threads::onesided::Worker::my().rdma_barrier_wait(barrier_stage); });
          }
          comp.getWorkerPool().joinAll();
          barrier_stage++;
@@ -172,19 +178,19 @@ int main(int argc, char* argv[]) {
             auto threadPartition = equi_partition(t_i, FLAGS_worker, nodeKeys);
             auto begin = part.first + threadPartition.first;
             auto end = part.first + threadPartition.second;
+            onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
             for (Key k = begin; k < end; ++k) {
-               auto p_id = get_partition(k);
+               [[maybe_unused]] auto p_id = get_partition(k);
                Value v = k;
-               threads::twosided::Worker::my().insert(p_id, k, v);
-
-               threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
+               tree.insert(k,v);
+               threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p);
             }
          });
       }
 
       barrier_wait();
       //=== Benchmark ===//
-      std::string benchmark = (FLAGS_scans) ? "scans" : "point queries";
+      std::string benchmark = (FLAGS_scans) ? "one-sided scans" : "one-sided point queries";
       ProfilingInfo pf{benchmark, FLAGS_keys, FLAGS_read_ratio, skew};
       comp.startProfiler(pf);
       std::atomic<bool> keep_running = true;
@@ -192,40 +198,46 @@ int main(int argc, char* argv[]) {
       for (uint64_t t_i = 0; t_i < FLAGS_worker; ++t_i) {
          comp.getWorkerPool().scheduleJobAsync(t_i, [&, t_i]() {
             running_threads_counter++;
-            for (; keep_running; threads::twosided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p)) {
+            onesided::BTree<Key, Value> tree(threads::onesided::Worker::my().metadataPage);
+            for (; keep_running; threads::onesided::Worker::my().counters.incr(profiling::WorkerCounters::tx_p)) {
                //=== Scan ===//
                if (FLAGS_scans) {
                   // pick partition and choose X values within
                   auto begin = utils::getTimePoint();
-                  auto pp = partition_map[utils::RandomGenerator::getRandU64(0, partition_map.size())];  // pair
-                  auto expected_values = static_cast<uint64_t>((double)(pp.second - pp.first) * FLAGS_scan_selectivity);
+                  Key initial_key = utils::RandomGenerator::getRandU64(0, FLAGS_keys);
+                  auto p_idx = get_partition(initial_key);
+                  auto pp = partition_map[p_idx];
+                  auto expected_values = static_cast<uint64_t>((double)(FLAGS_keys) * FLAGS_scan_selectivity);
                   auto start = utils::RandomGenerator::getRandU64(pp.first, pp.second - expected_values);
-                  auto kv_span = threads::twosided::Worker::my().scan(0, start, start + expected_values);
-                  if (kv_span.empty()) throw std::logic_error("empty span");
-                  for (const auto& kv : kv_span) {
-                     if (kv.key != start)
-                        throw std::logic_error("Key not as expected " + std::to_string(kv.key) + " vs " +
-                                               std::to_string(start));
+                  std::vector<Key> result_set;
+                  result_set.reserve(expected_values);
+                  tree.range_scan(
+                      start, start + expected_values, [&](Key& key, [[maybe_unused]] Value value) { result_set.push_back(key); },
+                      [&]() {
+                         result_set.clear();
+                      });
+                  
+                  std::for_each (std::begin(result_set), std::end(result_set), [&](Key& key) {
+                     ensure(key == start);
                      start++;
-                  }
-                  threads::twosided::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
+                  })
+                     ;
+                  threads::onesided::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
                                                          utils::getTimePoint() - begin);
                   continue;
                }
                //=== Upsert and Lookups ===//
                auto begin = utils::getTimePoint();
                Key key = utils::RandomGenerator::getRandU64(0, FLAGS_keys);
-               auto p_id = get_partition(key);
                if (FLAGS_read_ratio == 100 || utils::RandomGenerator::getRandU64(0, 100) < FLAGS_read_ratio) {
                   Value rValue{0};
-                  auto found = threads::twosided::Worker::my().lookup(p_id, key, rValue);
+                  auto found = tree.lookup(key, rValue);
                   if (!found) throw std::logic_error("key not found");
                } else {
                   Value value = utils::RandomGenerator::getRandU64Fast();
-                  auto success = threads::twosided::Worker::my().insert(p_id, key, value);
-                  if (!success) throw std::logic_error("key not found");
+                  tree.insert(key, value);
                }
-               threads::twosided::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
+               threads::onesided::Worker::my().counters.incr_by(profiling::WorkerCounters::latency,
                                                       utils::getTimePoint() - begin);
             }
             running_threads_counter--;

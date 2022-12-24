@@ -15,6 +15,7 @@ DEFINE_uint32(partitionBits, 6, "bits per partition");
 DEFINE_uint32(page_pool_partitions, 8, "page pool partitions each is shifted by 512 byte to increase cache associativity");
 // -------------------------------------------------------------------------------------
 DEFINE_bool(backoff, true, "backoff enabled");
+DEFINE_bool(prefetch_scan, false, "prefetch_scan enabled");
 // -------------------------------------------------------------------------------------
 DEFINE_bool(storage_node, false, "is storage node? ");
 DEFINE_uint64(compute_nodes, 1,"Number nodes participating");

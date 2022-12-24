@@ -277,7 +277,6 @@ struct BTree {
       Pos it_inner = parent->as<Inner>()->lower_bound(moving_start);
       // iterate inner and get all leafes
       for (; it_inner <= parent->as<Inner>()->end(); it_inner++) {
-         // fetch new leaf
          GuardO<NodePlaceholder> leaf(parent->as<Inner>()->value_at(it_inner));
          auto finished = iterate_leaf(leaf->as<Leaf>());
          if (finished || leaf->as<Leaf>()->fenceKeys.getUpper().isInfinity)

@@ -16,11 +16,11 @@ struct AbstractLatch {
    bool latched{false};
    bool moved{false};
    RDMAMemoryInfo rdma_mem;  // local rdma memory
-   AbstractLatch(){}; 
+   AbstractLatch(){};
    explicit AbstractLatch(RemotePtr remote_address) : remote_ptr(remote_address) {
-      if(remote_address != NULL_REMOTEPTR){
-      auto success = threads::onesided::Worker::my().local_rmemory.try_pop(rdma_mem);
-      if (!success) throw std::runtime_error("Maximum latch depth reached");
+      if (remote_address != NULL_REMOTEPTR) {
+         auto success = threads::onesided::Worker::my().local_rmemory.try_pop(rdma_mem);
+         if (!success) throw std::runtime_error("Maximum latch depth reached");
       }
    }
    AbstractLatch& operator=(AbstractLatch&& other) {
@@ -55,15 +55,50 @@ struct AbstractLatch {
    }
 };
 
+template <ConceptObject T>
+struct AsyncOptimisticLatch : public AbstractLatch<T> {
+   using super = AbstractLatch<T>;
+   using my_thread = dtree::threads::onesided::Worker;
+   explicit AsyncOptimisticLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
+   explicit AsyncOptimisticLatch(AsyncOptimisticLatch&& o_other) : AbstractLatch<T>(std::move(o_other)) {}
+
+   AsyncOptimisticLatch& operator=(AsyncOptimisticLatch&& other) {
+      *static_cast<AbstractLatch<T>*>(this) = std::move(*static_cast<AbstractLatch<T>*>(&other));
+      return *this;
+   }
+
+   AsyncOptimisticLatch& operator=(AsyncOptimisticLatch& other) = delete;
+   AsyncOptimisticLatch(AsyncOptimisticLatch& other) = delete;  // copy constructor
+   // because RDMA read atomi w.r.t. to a cache line as per the x68 intel guide
+   bool try_latch() {
+      ensure(super::remote_ptr != NULL_REMOTEPTR);
+      my_thread::my().read_latch(super::remote_ptr, super::rdma_mem.latch_buffer);
+      auto* ph = static_cast<PageHeader*>(super::rdma_mem.latch_buffer);
+      if (ph->remote_latch == EXCLUSIVE_LOCKED) return false;
+      super::version = ph->version;
+      return true;
+   };
+
+   void schedule_read() {
+      my_thread::my().remote_read<T>(super::remote_ptr, static_cast<T*>(super::rdma_mem.local_copy), true);
+   }
+   bool read_completed() {
+      my_thread::my().poll_async_completion(super::remote_ptr);
+   }
+   bool validate() {
+      my_thread::my().read_latch(super::remote_ptr, super::rdma_mem.latch_buffer);
+      auto* ph = static_cast<PageHeader*>(static_cast<void*>(super::rdma_mem.latch_buffer));
+      if (ph->remote_latch == EXCLUSIVE_LOCKED || ph->version != super::version) return false;
+      return true;
+   }
+};
 //=== Locking  ===//
 template <ConceptObject T>
 struct OptimisticLatch : public AbstractLatch<T> {
    using super = AbstractLatch<T>;
    using my_thread = dtree::threads::onesided::Worker;
-   explicit OptimisticLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {
-   }
-   explicit OptimisticLatch(OptimisticLatch&& o_other) : AbstractLatch<T>(std::move(o_other)) {
-   }
+   explicit OptimisticLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
+   explicit OptimisticLatch(OptimisticLatch&& o_other) : AbstractLatch<T>(std::move(o_other)) {}
 
    OptimisticLatch& operator=(OptimisticLatch&& other) {
       *static_cast<AbstractLatch<T>*>(this) = std::move(*static_cast<AbstractLatch<T>*>(&other));
@@ -101,8 +136,7 @@ struct ExclusiveLatch : public AbstractLatch<T> {
    // returns true successfully
    using my_thread = dtree::threads::onesided::Worker;
    explicit ExclusiveLatch(RemotePtr remote_ptr) : AbstractLatch<T>(remote_ptr) {}
-   explicit ExclusiveLatch(OptimisticLatch<T>&& o_other) : AbstractLatch<T>(std::move(o_other)) {
-   }
+   explicit ExclusiveLatch(OptimisticLatch<T>&& o_other) : AbstractLatch<T>(std::move(o_other)) {}
    // delete constuctors we do not want
    ExclusiveLatch& operator=(ExclusiveLatch& other) = delete;
    ExclusiveLatch(ExclusiveLatch& other) = delete;   // copy constructor
@@ -181,7 +215,8 @@ struct AllocationLatch : public AbstractLatch<T> {
       if (my_thread::my().remote_pages.empty()) { my_thread::my().refresh_caches(); }
       if (!my_thread::my().remote_pages.try_pop(super::remote_ptr))
          throw std::logic_error("could not get a new remote page");
-      auto success = threads::onesided::Worker::my().local_rmemory.try_pop(super::rdma_mem); //cannot use constructor of AL latch here
+      auto success = threads::onesided::Worker::my().local_rmemory.try_pop(
+          super::rdma_mem);  // cannot use constructor of AL latch here
       onesided::allocateInRDMARegion(static_cast<T*>(static_cast<void*>(super::rdma_mem.local_copy)));
       super::latched = true;
       ensure(success);
@@ -239,10 +274,9 @@ struct GuardO {
 
    // move assignment operator
    GuardO& operator=(GuardO&& other) {
-      if (!moved ) {
+      if (!moved) {
          checkVersionAndRestart();
          [[maybe_unused]] auto s = threads::onesided::Worker::my().local_rmemory.try_push(latch.rdma_mem);
-
       }
       latch.moved = false;
       moved = false;
@@ -260,8 +294,7 @@ struct GuardO {
    void checkVersionAndRestart() {
       if (!moved) {
          if (latch.validate()) return;
-         if (std::uncaught_exceptions() == 0)
-            throw OLCRestartException();
+         if (std::uncaught_exceptions() == 0) throw OLCRestartException();
       }
    }
 

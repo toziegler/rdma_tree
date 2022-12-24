@@ -200,11 +200,21 @@ struct Worker : public AbstractWorker {
    }
 
    template <typename T>
-   void remote_read(RemotePtr remote_ptr, T* local_copy) {
+   void remote_read(RemotePtr remote_ptr, T* local_copy, bool async = false) {
       ensure(sizeof(T) <= THREAD_LOCAL_RDMA_BUFFER);
       auto nodeId = remote_ptr.getOwner();
       auto addr = remote_ptr.plainOffset();
       rdma::postRead(const_cast<T*>(local_copy), *(cctxs[nodeId].rctx), rdma::completion::signaled, addr);
+      int comp{0};
+      ibv_wc wcReturn;
+      while (!async && comp == 0) {
+         comp = rdma::pollCompletion(cctxs[nodeId].rctx->id->qp->send_cq, 1, &wcReturn);
+         if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
+      }
+   }
+   void poll_async_completion(RemotePtr remote_ptr){
+      auto nodeId = remote_ptr.getOwner();
+      [[maybe_unused]] auto addr = remote_ptr.plainOffset();
       int comp{0};
       ibv_wc wcReturn;
       while (comp == 0) {
@@ -212,7 +222,6 @@ struct Worker : public AbstractWorker {
          if (comp > 0 && wcReturn.status != IBV_WC_SUCCESS) throw;
       }
    }
-
    void refresh_caches() {
       uint64_t per_node_cache = TL_CACHE_SIZE / fLU64::FLAGS_storage_nodes;
       for (size_t i = 0; i < FLAGS_storage_nodes; i++) {
@@ -223,6 +232,7 @@ struct Worker : public AbstractWorker {
             ensure(remote_pages.try_push(addr));
          }
       }
+      remote_pages.shuffle();
    }
 
    // returns old value; before increment

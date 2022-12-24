@@ -85,13 +85,14 @@ struct KVPair{
 };
 using u64 = uint64_t;
 using s32 = int32_t;
-constexpr size_t BTREE_NODE_SIZE = 4096;
+constexpr size_t BTREE_NODE_SIZE = 1024;
+//constexpr size_t BTREE_NODE_SIZE = 4096;
 constexpr size_t PADDING =8; // optimizes performance atomic   
 constexpr uint64_t THREAD_LOCAL_RDMA_BUFFER = BTREE_NODE_SIZE + PADDING; // 8kb
-constexpr uint64_t TL_CACHE_SIZE = 4; // 
+constexpr uint64_t TL_CACHE_SIZE = 30; // 
 constexpr size_t CACHE_LINE = 64;
 constexpr size_t MAX_NODES = 64; // only supported due to bitmap
-constexpr size_t MAX_SCAN_RESULT = 100; // 100 rows
+constexpr size_t MAX_SCAN_RESULT = 400000; // 100 rows
 constexpr size_t PARTITIONS = 64;  // partitions for partitioned queue 
 constexpr size_t BATCH_SIZE = 128; // for partitioned queue 
 constexpr bool USE_BACKOFF = true;
