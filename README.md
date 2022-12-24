@@ -1,18 +1,54 @@
-* (Modern) Designing Distributed RDMA B-Trees 
-** TODOs 
+# (Modern) Designing Distributed RDMA B-Trees (WIP) 
+This is a (modern) implementation of our paper: 
+```
+@inproceedings{DBLP:conf/sigmod/0001VBFK19,
+  author    = {Tobias Ziegler and
+               Sumukha Tumkur Vani and
+               Carsten Binnig and
+               Rodrigo Fonseca and
+               Tim Kraska},
+  title     = {Designing Distributed Tree-based Index Structures for Fast RDMA-capable
+               Networks},
+  booktitle = {{SIGMOD} Conference 2019},
+  year      = {2019},
+}
+```
+## Motivation
+The old code was based on old hardware, drivers, and interfaces. 
 
-** Setup
 
-*** Cluster Setup
+## Differences
+There are notable differences compared to the original implementation: 
+
+1. Two-sided version uses one-one sided RDMA for message passing which tremendously improved the performance compared to the original implementation that used Shared Receive Queues.
+The reason is that the SRQ needed to be synchronized among multiple message handler, which caused quite a bit of contention.
+We implemented a time-tested one-sided mailbox design, as found in our other paper Scalestore and TU Munich L5 paper.
+
+2. We use a conventional B+-Tree instead of a B-Link Tree. 
+Although the B-Link Tree can be better in high contention scenarios since it separates the splits into two phases, a standard implementation has some advantages.
+First, since splits are now entirely installed at once, we can use the inner nodes to prefetch instead of dedicated prefetch pages.
+The prefetch pages tend to become outdated frequently, requiring expensive updates, and, in fact, the performance suffered.
+Second, we use fence keys to perform the scan, which would additionally enable caching.
+That is, the inner nodes can be easily cached as they are usually below 1% of all B-Tree pages. To detect concurrent modifications, we could rely on the technique proposed in FaRM.
+FaRM uses the fence keys on the leaf-level to see if those match the cached ranges; otherwise, the cache is refreshed. 
+This would give us a better "hybrid" version which (1) improves performance tremendously (2) load balances as the pure one-sided (3) no CPU load on the storage.
+
+## TODOs 
+- [ ] Prefetch scan
+- [ ] Hybrid implementation (not sure if needed)
+
+## Setup
+
+### Cluster Setup
 All experiments were conducted on a 5-node cluster running Ubuntu 18.04.1 LTS, with Linux 4.15.0 kernel.
 Each node is equipped with two Intel(R) Xeon(R) Gold 5120 CPUs (14 cores), 512 GB main-memory split between both sockets.
-The nodes of the cluster are connected with an InfiniBand network using one Mellanox ConnectX-5 MT27800 NICs (InfiniBand EDR 4x, 100 Gbps) per node.
+The cluster nodes are connected with an InfiniBand network using one Mellanox ConnectX-5 MT27800 NICs (InfiniBand EDR 4x, 100 Gbps) per node.
    
-*** Mellanox RDMA
+### Mellanox RDMA
 We used the following Mellanox OFED installation:
-
-**** ofed_info
-#+begin_src shell
+   
+#### ofed_info
+```shell
 MLNX_OFED_LINUX-5.1-2.5.8.0 (OFED-5.1-2.5.8):
 Installed Packages:
 -------------------
@@ -64,16 +100,11 @@ ii  sharp                                         2.2.2.MLNX20201102.b26a0fd-1.5
 ii  srp-dkms                                      5.1-OFED.5.1.2.5.3.1                    all          DKMS support fo srp kernel modules
 ii  srptools                                      51mlnx1-1.51258                         amd64        Tools for Infiniband attached storage (SRP)
 ii  ucx                                           1.9.0-1.51258                           amd64        Unified Communication X
-#+end_src
+```
 
-
-*** Libraries 
+### Libraries 
 - gflags
 - ibverbs
 - tabulate
 - rdma cm
   
-** Benchmarks
-- YCSB runner
-  
-** Tests
