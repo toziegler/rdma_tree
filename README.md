@@ -1,52 +1,55 @@
-# (Modern) Designing Distributed RDMA B-Trees (WIP) 
-This is a (modern) implementation of our paper: 
-```
+
+# Modern Designing Distributed RDMA B-Trees 
+
+This repository contains the modernized implementation of our paper:
+
+```bibtex
 @inproceedings{DBLP:conf/sigmod/0001VBFK19,
   author    = {Tobias Ziegler and
                Sumukha Tumkur Vani and
                Carsten Binnig and
                Rodrigo Fonseca and
                Tim Kraska},
-  title     = {Designing Distributed Tree-based Index Structures for Fast RDMA-capable
-               Networks},
+  title     = {Designing Distributed Tree-based Index Structures for Fast RDMA-capable Networks},
   booktitle = {{SIGMOD} Conference 2019},
   year      = {2019},
 }
 ```
+
 ## Motivation
-The old code was based on old hardware, drivers, and interfaces. 
+The motivation to revisit and modernize this project stemmed from the need to adapt to current hardware, drivers, and interfaces which have substantially evolved since the original work.
 
+## Features & Improvements
 
-## Differences
-There are notable differences compared to the original implementation: 
+Compared to the original implementation, the modern version introduces the following enhancements:
 
-1. Two-sided version uses one-one sided RDMA for message passing which tremendously improved the performance compared to the original implementation that used Shared Receive Queues.
-The reason is that the SRQ needed to be synchronized among multiple message handler, which caused quite a bit of contention.
-We implemented a time-tested one-sided mailbox design, as found in our other paper Scalestore and TU Munich L5 paper.
+1. **Improved Message Passing:** The two-sided version now employs one-sided RDMA for message passing. This has greatly boosted performance over the initial approach that used Shared Receive Queues (SRQ). This change was made since SRQ synchronization across multiple message handlers introduced contention. We've adopted the proven one-sided mailbox design from our other works, such as the Scalestore and TU Munich L5 paper.
 
-2. We use a conventional B+-Tree instead of a B-Link Tree. 
-Although the B-Link Tree can be better in high contention scenarios since it separates the splits into two phases, a standard implementation has some advantages.
-First, since splits are now entirely installed at once, we can use the inner nodes to prefetch instead of dedicated prefetch pages.
-The prefetch pages tend to become outdated frequently, requiring expensive updates, and, in fact, the performance suffered.
-Second, we use fence keys to perform the scan, which would additionally enable caching.
-That is, the inner nodes can be easily cached as they are usually below 1% of all B-Tree pages. To detect concurrent modifications, we could rely on the technique proposed in FaRM.
-FaRM uses the fence keys on the leaf-level to see if those match the cached ranges; otherwise, the cache is refreshed. 
-This would give us a better "hybrid" version which (1) improves performance tremendously (2) load balances as the pure one-sided (3) no CPU load on the storage.
+2. **Conventional B+-Tree Implementation:** Instead of the B-Link Tree, we now utilize a standard B+-Tree. While the B-Link Tree might fare better in high contention scenarios due to its two-phase splits, the standard implementation brings distinct advantages:
+   - Splits are now executed in a single phase, enabling the use of inner nodes for prefetching.
+   - We've eliminated dedicated prefetch pages, which often became outdated, thereby improving performance.
+   - The system now leverages fence keys for scans, which further facilitates caching. Inner nodes, which comprise less than 1% of all B-Tree pages, can be cached. Concurrent modifications can be identified using techniques from FaRM, enhancing the "hybrid" design.
 
-## TODOs 
-- [ ] Prefetch scan
-- [ ] Hybrid implementation (not sure if needed)
+## To-Do List
+
+- [ ] Implement Prefetch Scanning.
+- [ ] Evaluate the need for and possibly implement a Hybrid version.
 
 ## Setup
 
-### Cluster Setup
-All experiments were conducted on a 5-node cluster running Ubuntu 18.04.1 LTS, with Linux 4.15.0 kernel.
-Each node is equipped with two Intel(R) Xeon(R) Gold 5120 CPUs (14 cores), 512 GB main-memory split between both sockets.
-The cluster nodes are connected with an InfiniBand network using one Mellanox ConnectX-5 MT27800 NICs (InfiniBand EDR 4x, 100 Gbps) per node.
-   
-### Mellanox RDMA
-We used the following Mellanox OFED installation:
-   
+### Cluster Configuration
+- **Nodes**: 5-node cluster.
+- **OS**: Ubuntu 18.04.1 LTS.
+- **Kernel**: Linux 4.15.0.
+- **Hardware**: Each node has:
+   - Two Intel(R) Xeon(R) Gold 5120 CPUs (14 cores each).
+   - 512 GB main memory (distributed across both CPU sockets).
+   - Mellanox ConnectX-5 MT27800 NICs (InfiniBand EDR 4x, 100 Gbps).
+
+### Mellanox RDMA Version
+
+For detailed information on the Mellanox OFED installation used, here is the `ofed_info` command output:
+
 #### ofed_info
 ```shell
 MLNX_OFED_LINUX-5.1-2.5.8.0 (OFED-5.1-2.5.8):
@@ -102,9 +105,11 @@ ii  srptools                                      51mlnx1-1.51258               
 ii  ucx                                           1.9.0-1.51258                           amd64        Unified Communication X
 ```
 
-### Libraries 
-- gflags
-- ibverbs
-- tabulate
-- rdma cm
+### Required Libraries 
+
+Ensure these libraries are available for successful compilation and execution:
+- `gflags`
+- `ibverbs`
+- `tabulate`
+- `rdma cm`
   
